@@ -113,19 +113,154 @@ import * as THREE from 'three';
   }
 
   function buildEnvironment() {
-    const floorGeo = new THREE.PlaneGeometry(REGION / SCALE, MAP_H / SCALE);
-    for (let r = 0; r < REGIONS.length; r++) {
-      const center = worldAt(r * REGION + REGION / 2, MAP_H / 2, -0.12);
-      const floor = addMesh(worldGroup, floorGeo, mat(REGIONS[r].ground), center, { rotation: [-Math.PI / 2, 0, Math.PI / 4], castShadow: false });
-      floor.receiveShadow = true;
+    const marginX = 900, marginY = 600;
+    const groundWidth = (WORLD + marginX * 2) / SCALE;
+    const groundHeight = (MAP_H + marginY * 2) / SCALE;
+    const groundGeo = new THREE.PlaneGeometry(groundWidth, groundHeight, 300, 96);
+    const positions = groundGeo.attributes.position;
+    const colors = new Float32Array(positions.count * 3);
+    const biomeColors = REGIONS.map((region) => new THREE.Color(region.ground));
+    for (let i = 0; i < positions.count; i++) {
+      const x = WORLD / 2 + positions.getX(i) * SCALE;
+      const boundary = Math.round(x / REGION) * REGION;
+      const left = Math.max(0, Math.min(REGIONS.length - 1, Math.floor((boundary - 1) / REGION)));
+      const right = Math.max(0, Math.min(REGIONS.length - 1, left + 1));
+      let color = biomeColors[regionAt(Math.max(0, Math.min(WORLD - 1, x)))].clone();
+      if (boundary > 0 && boundary < WORLD && Math.abs(x - boundary) < 110) {
+        const t = THREE.MathUtils.smoothstep(x, boundary - 110, boundary + 110);
+        color = biomeColors[left].clone().lerp(biomeColors[right], t);
+      }
+      const variation = 0.88 + random01(i * 19 + 3) * 0.2;
+      color.multiplyScalar(variation);
+      colors[i * 3] = color.r;
+      colors[i * 3 + 1] = color.g;
+      colors[i * 3 + 2] = color.b;
     }
+    groundGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const groundMaterial = new THREE.MeshStandardMaterial({ map: createGroundTexture(), vertexColors: true, roughness: 1 });
+    const ground = new THREE.Mesh(groundGeo, groundMaterial);
+    ground.position.copy(worldAt(WORLD / 2, MAP_H / 2, -0.12));
+    ground.rotation.set(-Math.PI / 2, 0, Math.PI / 4);
+    ground.receiveShadow = true;
+    ground.frustumCulled = false;
+    worldGroup.add(ground);
+    buildTrail();
     buildTreesAndRocks();
+    buildGroundCover();
     buildDecorativeLights();
+  }
+
+  function createGroundTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 512;
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#f2f0e6';
+    context.fillRect(0, 0, 512, 512);
+    for (let i = 0; i < 18000; i++) {
+      const shade = 110 + Math.floor(random01(i + 318) * 120);
+      const alpha = 0.025 + random01(i + 619) * 0.09;
+      const size = 1 + random01(i + 817) * 3;
+      context.fillStyle = `rgba(${shade},${shade},${shade},${alpha})`;
+      context.fillRect(random01(i + 101) * 512, random01(i + 203) * 512, size, size);
+    }
+    for (let i = 0; i < 140; i++) {
+      const shade = 100 + Math.floor(random01(i + 911) * 110);
+      context.fillStyle = `rgba(${shade},${shade},${shade},0.055)`;
+      context.beginPath();
+      context.ellipse(random01(i + 301) * 512, random01(i + 401) * 512, 4 + random01(i + 501) * 17, 3 + random01(i + 601) * 12, random01(i + 701) * Math.PI, 0, Math.PI * 2);
+      context.fill();
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(28, 12);
+    texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    return texture;
+  }
+
+  function trailCenter(x) {
+    return MAP_H / 2 + Math.sin(x / 275) * 32 + Math.sin(x / 107) * 11;
+  }
+
+  function buildTrail() {
+    const segments = Math.ceil(WORLD / 8);
+    const vertices = new Float32Array((segments + 1) * 2 * 3);
+    const colors = new Float32Array((segments + 1) * 2 * 3);
+    const indices = [];
+    const edgeColor = new THREE.Color(0x806344), centerColor = new THREE.Color(0xb19361);
+    for (let i = 0; i <= segments; i++) {
+      const x = WORLD * i / segments;
+      const center = trailCenter(x);
+      const width = 102 + Math.sin(x / 145) * 13 + (random01(i + 153) - 0.5) * 10;
+      for (let side = 0; side < 2; side++) {
+        const edge = side === 0 ? -1 : 1;
+        const irregular = (random01(i * 2 + side + 440) - 0.5) * 10;
+        const y = center + edge * (width / 2 + irregular);
+        const p = worldAt(x, y, -0.045);
+        const index = (i * 2 + side) * 3;
+        vertices[index] = p.x; vertices[index + 1] = p.y; vertices[index + 2] = p.z;
+        const color = edgeColor.clone().lerp(centerColor, 0.28 + random01(i * 5 + side + 67) * 0.54);
+        colors[index] = color.r; colors[index + 1] = color.g; colors[index + 2] = color.b;
+      }
+      if (i < segments) {
+        const a = i * 2;
+        indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const trail = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 1, side: THREE.DoubleSide }));
+    trail.frustumCulled = false;
+    worldGroup.add(trail);
+
+    const stones = new THREE.InstancedMesh(shared.rock, mats.rock, 520);
+    for (let i = 0; i < 520; i++) {
+      const x = random01(i + 128) * WORLD;
+      const width = 102 + Math.sin(x / 145) * 13;
+      const y = trailCenter(x) + (random01(i + 228) - 0.5) * width * 0.86;
+      temp.position.copy(worldAt(x, y, -0.005));
+      temp.rotation.set(random01(i + 328) * 0.18, random01(i + 428) * Math.PI, random01(i + 528) * 0.18);
+      temp.scale.set(0.12 + random01(i + 628) * 0.28, 0.025 + random01(i + 728) * 0.04, 0.08 + random01(i + 828) * 0.2);
+      temp.updateMatrix();
+      stones.setMatrixAt(i, temp.matrix);
+      stones.setColorAt(i, new THREE.Color([0x8e816b, 0xb0a184, 0x766c5b][i % 3]).multiplyScalar(0.8 + random01(i + 928) * 0.4));
+    }
+    stones.instanceMatrix.needsUpdate = true;
+    if (stones.instanceColor) stones.instanceColor.needsUpdate = true;
+    stones.castShadow = false;
+    stones.receiveShadow = true;
+    worldGroup.add(stones);
+  }
+
+  function buildGroundCover() {
+    const grassGeo = new THREE.ConeGeometry(0.085, 0.38, 4);
+    const grass = new THREE.InstancedMesh(grassGeo, mat(0x72804b), 1100);
+    for (let i = 0; i < 1100; i++) {
+      const x = random01(i + 2031) * WORLD;
+      let y = 18 + random01(i + 2131) * (MAP_H - 36);
+      if (Math.abs(y - trailCenter(x)) < 78) y += y < MAP_H / 2 ? -75 : 75;
+      y = Math.max(10, Math.min(MAP_H - 10, y));
+      temp.position.copy(worldAt(x, y, 0.025));
+      temp.rotation.set(0, random01(i + 2231) * Math.PI, (random01(i + 2331) - 0.5) * 0.28);
+      const scale = 0.35 + random01(i + 2431) * 0.9;
+      temp.scale.set(scale, scale, scale);
+      temp.updateMatrix();
+      grass.setMatrixAt(i, temp.matrix);
+      grass.setColorAt(i, new THREE.Color([0x647849, 0x899052, 0x9a965b, 0x536d43][i % 4]).multiplyScalar(0.8 + random01(i + 2531) * 0.35));
+    }
+    grass.instanceMatrix.needsUpdate = true;
+    if (grass.instanceColor) grass.instanceColor.needsUpdate = true;
+    grass.castShadow = false;
+    grass.receiveShadow = true;
+    worldGroup.add(grass);
   }
 
   function buildTreesAndRocks() {
     for (let regionIndex = 0; regionIndex < REGIONS.length; regionIndex++) {
-      for (let i = 0; i < 7; i++) {
+      for (let i = 0; i < 16; i++) {
         const seed = regionIndex * 17 + i;
         const x = regionIndex * REGION + 34 + random01(seed + 20) * (REGION - 68);
         const edge = random01(seed + 21) < 0.5 ? 0 : 1;
