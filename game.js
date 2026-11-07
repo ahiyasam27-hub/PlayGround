@@ -49,7 +49,7 @@ import * as THREE from 'three';
     { name: 'Starfall Crown', boss: 'The Void King', ground: 0x514b72, tile: 0x6a6090, accent: 0xb2a4d1, sky: 0xaaa1c7, leaf: 0x61518b },
   ];
   const WORLD = REGION * REGIONS.length;
-  const input = { left: false, right: false, up: false, down: false, attack: false, stickX: 0, stickY: 0 };
+  const input = { left: false, right: false, up: false, down: false, attack: false, jump: false, jumpPressed: false, stickX: 0, stickY: 0 };
   const rightAxis = new THREE.Vector3(Math.SQRT1_2, 0, -Math.SQRT1_2);
   const depthAxis = new THREE.Vector3(Math.SQRT1_2, 0, Math.SQRT1_2);
   const temp = new THREE.Object3D();
@@ -202,25 +202,44 @@ import * as THREE from 'three';
 
   function createHeroModel() {
     const root = new THREE.Group();
-    const torso = addMesh(root, new THREE.CapsuleGeometry(0.27, 0.48, 4, 8), mats.heroCoat, v3(0, 0.9, 0));
+    const torsoPivot = new THREE.Group();
+    torsoPivot.position.set(0, 0.78, 0);
+    root.add(torsoPivot);
+    const torso = addMesh(torsoPivot, new THREE.CapsuleGeometry(0.27, 0.48, 4, 8), mats.heroCoat, v3(0, 0.12, 0));
     torso.scale.set(0.82, 1, 0.58);
-    addMesh(root, shared.sphere, mats.skin, v3(0, 1.57, 0), { scale: [0.23, 0.25, 0.22] });
-    addMesh(root, shared.sphere, mats.hair, v3(0, 1.72, -0.035), { scale: [0.245, 0.17, 0.235] });
-    addMesh(root, shared.box, mats.heroTrim, v3(0, 0.92, 0.16), { scale: [0.09, 0.6, 0.04], rotation: [0, 0, -0.12] });
-    const legs = [];
+    addMesh(torsoPivot, shared.box, mats.heroTrim, v3(0, 0.13, 0.16), { scale: [0.09, 0.6, 0.04], rotation: [0, 0, -0.12] });
+
+    const headPivot = new THREE.Group();
+    headPivot.position.set(0, 0.69, 0);
+    torsoPivot.add(headPivot);
+    addMesh(headPivot, shared.sphere, mats.skin, v3(0, 0.11, 0), { scale: [0.23, 0.25, 0.22] });
+    addMesh(headPivot, shared.sphere, mats.hair, v3(0, 0.26, -0.035), { scale: [0.245, 0.17, 0.235] });
+
+    const legs = [], feet = [], arms = [];
     for (const side of [-1, 1]) {
-      const leg = addMesh(root, new THREE.CapsuleGeometry(0.105, 0.32, 3, 6), mats.leather, v3(side * 0.12, 0.36, 0.015));
-      legs.push(leg);
-      addMesh(root, shared.box, mats.heroTrim, v3(side * 0.12, 0.1, 0.09), { scale: [0.2, 0.12, 0.34] });
-      addMesh(root, new THREE.CapsuleGeometry(0.09, 0.34, 3, 6), mats.heroCoat, v3(side * 0.32, 1.02, 0), { rotation: [0, 0, side * -0.15] });
+      const legPivot = new THREE.Group();
+      legPivot.position.set(side * 0.12, 0.58, 0.015);
+      root.add(legPivot);
+      addMesh(legPivot, new THREE.CapsuleGeometry(0.105, 0.32, 3, 6), mats.leather, v3(0, -0.22, 0));
+      const foot = addMesh(legPivot, shared.box, mats.heroTrim, v3(0, -0.49, 0.09), { scale: [0.2, 0.12, 0.34] });
+      legs.push(legPivot);
+      feet.push(foot);
+
+      const armPivot = new THREE.Group();
+      armPivot.position.set(side * 0.29, 0.42, 0);
+      torsoPivot.add(armPivot);
+      addMesh(armPivot, new THREE.CapsuleGeometry(0.09, 0.34, 3, 6), mats.heroCoat, v3(side * 0.025, -0.2, 0));
+      addMesh(armPivot, new THREE.SphereGeometry(0.085, 8, 6), mats.skin, v3(0, -0.4, 0.025));
+      arms.push(armPivot);
     }
+
     const swordPivot = new THREE.Group();
-    swordPivot.position.set(0.39, 1.08, 0.08);
-    root.add(swordPivot);
-    addMesh(swordPivot, new THREE.BoxGeometry(0.09, 0.56, 0.055), mats.steel, v3(0, 0.36, 0));
-    addMesh(swordPivot, new THREE.BoxGeometry(0.28, 0.07, 0.09), mats.heroTrim, v3(0, 0.08, 0));
-    addMesh(swordPivot, new THREE.CylinderGeometry(0.045, 0.055, 0.22, 7), mats.leather, v3(0, -0.07, 0));
-    return { root, legs, swordPivot };
+    swordPivot.position.set(0, -0.42, 0.04);
+    arms[1].add(swordPivot);
+    addMesh(swordPivot, new THREE.BoxGeometry(0.09, 0.56, 0.055), mats.steel, v3(0, 0.3, 0));
+    addMesh(swordPivot, new THREE.BoxGeometry(0.28, 0.07, 0.09), mats.heroTrim, v3(0, 0.02, 0));
+    addMesh(swordPivot, new THREE.CylinderGeometry(0.045, 0.055, 0.22, 7), mats.leather, v3(0, -0.13, 0));
+    return { root, torsoPivot, torso, headPivot, legs, feet, arms, swordPivot };
   }
 
   function createSlimeModel(isBoss = false, region = 0) {
@@ -305,7 +324,7 @@ import * as THREE from 'three';
 
   function reset() {
     while (actorGroup.children.length) actorGroup.remove(actorGroup.children[0]);
-    hero = { x: 65, y: 220, vx: 0, vy: 0, faceX: 1, faceY: 0, hp: 5, invuln: 0, attack: 0, attackCd: 0, checkpoint: { x: 65, y: 220 }, model: createHeroModel() };
+    hero = { x: 65, y: 220, vx: 0, vy: 0, faceX: 1, faceY: 0, targetYaw: Math.PI / 4, hp: 5, invuln: 0, attack: 0, attackCd: 0, jumpHeight: 0, jumpVelocity: 0, jumpPhase: 'grounded', jumpTimer: 0, landing: 0, gaitPhase: 0, moveBlend: 0, runBlend: 0, idleTime: 0, checkpoint: { x: 65, y: 220 }, model: createHeroModel() };
     actorGroup.add(hero.model.root);
     enemies = []; coins = []; checkpoints = []; gates = []; bosses = []; particles = []; keysFound = 0;
     for (let r = 0; r < REGIONS.length; r++) {
@@ -324,7 +343,8 @@ import * as THREE from 'three';
 
   function placeHero() {
     const p = worldAt(hero.x, hero.y);
-    hero.model.root.position.set(p.x, hero.invuln > 0 ? 0.035 * Math.sin(elapsed * 28) : 0, p.z);
+    const hurtBob = hero.invuln > 0 ? 0.025 * Math.sin(elapsed * 28) : 0;
+    hero.model.root.position.set(p.x, hero.jumpHeight + hurtBob, p.z);
   }
 
   function updateHUD() {
@@ -374,10 +394,15 @@ import * as THREE from 'three';
     const knob = document.getElementById('stickKnob');
     if (knob) knob.style.transform = 'translate(0px, 0px)';
   }
-  const keyMap = { arrowleft: 'left', a: 'left', arrowright: 'right', d: 'right', arrowup: 'up', w: 'up', arrowdown: 'down', s: 'down', j: 'attack', x: 'attack', ' ': 'attack' };
+  const keyMap = { arrowleft: 'left', a: 'left', arrowright: 'right', d: 'right', arrowup: 'up', w: 'up', arrowdown: 'down', s: 'down', j: 'attack', x: 'attack', ' ': 'jump' };
   window.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase();
-    if (key in keyMap) { event.preventDefault(); input[keyMap[key]] = true; }
+    if (key in keyMap) {
+      event.preventDefault();
+      const action = keyMap[key];
+      if (action === 'jump' && !input.jump) input.jumpPressed = true;
+      input[action] = true;
+    }
     if (key === 'escape') pauseGame();
     if (key === 'enter' && screen !== 'playing') begin();
   });
@@ -391,6 +416,7 @@ import * as THREE from 'three';
     button.addEventListener('pointerdown', (event) => {
       event.preventDefault();
       button.setPointerCapture?.(event.pointerId);
+      if (key === 'jump') input.jumpPressed = true;
       input[key] = true;
       button.classList.add('pressed');
     });
@@ -534,11 +560,86 @@ import * as THREE from 'three';
   }
 
   function faceHero(x, y) {
-    if (Math.hypot(x, y) < 0.08) return;
-    hero.faceX = x; hero.faceY = y;
-    const wx = x * rightAxis.x + y * depthAxis.x;
-    const wz = x * rightAxis.z + y * depthAxis.z;
-    hero.model.root.rotation.y = Math.atan2(wx, wz);
+    const length = Math.hypot(x, y);
+    if (length < 0.08) return;
+    hero.faceX = x / length;
+    hero.faceY = y / length;
+    const wx = hero.faceX * rightAxis.x + hero.faceY * depthAxis.x;
+    const wz = hero.faceX * rightAxis.z + hero.faceY * depthAxis.z;
+    hero.targetYaw = Math.atan2(wx, wz);
+  }
+
+  function animateHero(dt, movementSpeed) {
+    const model = hero.model;
+    const speed01 = THREE.MathUtils.clamp(movementSpeed / 190, 0, 1);
+    const moveTarget = speed01 * speed01 * (3 - 2 * speed01);
+    const runTarget = THREE.MathUtils.clamp((speed01 - 0.48) / 0.28, 0, 1);
+    const blend = 1 - Math.exp(-dt * 9);
+    hero.moveBlend += (moveTarget - hero.moveBlend) * blend;
+    hero.runBlend += (runTarget - hero.runBlend) * (1 - Math.exp(-dt * 6));
+
+    if (movementSpeed > 0.5) {
+      const strideLength = 1.65 + hero.runBlend * 0.65;
+      hero.gaitPhase += (movementSpeed / SCALE) * (Math.PI * 2 / strideLength) * dt;
+    } else hero.idleTime += dt;
+
+    const yawDelta = Math.atan2(Math.sin(hero.targetYaw - model.root.rotation.y), Math.cos(hero.targetYaw - model.root.rotation.y));
+    model.root.rotation.y += yawDelta * (1 - Math.exp(-dt * 13));
+    const yaw = model.root.rotation.y;
+    const worldVX = hero.vx * rightAxis.x + hero.vy * depthAxis.x;
+    const worldVZ = hero.vx * rightAxis.z + hero.vy * depthAxis.z;
+    const forwardSpeed = worldVX * Math.sin(yaw) + worldVZ * Math.cos(yaw);
+    const sideSpeed = worldVX * Math.cos(yaw) - worldVZ * Math.sin(yaw);
+    const locomotion = hero.moveBlend;
+    const run = hero.runBlend;
+    const phase = hero.gaitPhase;
+    const step = Math.sin(phase);
+    const stride = 0.42 + run * 0.24;
+
+    model.torso.scale.y = 1 + Math.sin(elapsed * 2.1) * 0.012 * (1 - locomotion);
+    model.torsoPivot.position.y = 0.78 + Math.abs(Math.sin(phase * 2)) * (0.012 + run * 0.018) * locomotion;
+    model.torsoPivot.rotation.x = 0.025 + locomotion * (0.035 + run * 0.055) + (hero.jumpHeight > 0 ? -0.08 : 0);
+    model.torsoPivot.rotation.z = -sideSpeed / 190 * 0.055 * locomotion + Math.sin(elapsed * 1.35) * 0.012 * (1 - locomotion);
+    model.headPivot.rotation.x = -model.torsoPivot.rotation.x * 0.35;
+    model.headPivot.rotation.y = Math.sin(elapsed * 0.8) * 0.025 * (1 - locomotion);
+
+    for (let i = 0; i < 2; i++) {
+      const legPhase = phase + i * Math.PI;
+      const swing = Math.sin(legPhase);
+      model.legs[i].rotation.x = swing * stride * locomotion;
+      model.feet[i].position.y = -0.49 + Math.max(0, Math.cos(legPhase)) * (0.075 + run * 0.065) * locomotion;
+      model.feet[i].rotation.x = -swing * stride * 0.42 * locomotion;
+      const armSwing = Math.sin(phase + (1 - i) * Math.PI) * (0.28 + run * 0.24) * locomotion;
+      model.arms[i].rotation.x = armSwing;
+      model.arms[i].rotation.z = (i === 0 ? -0.08 : 0.12) * (1 - locomotion);
+    }
+
+    let attackCurve = 0;
+    if (hero.attack > 0) {
+      const progress = 1 - hero.attack / 0.34;
+      attackCurve = Math.sin(Math.max(0, Math.min(1, progress)) * Math.PI);
+      model.arms[1].rotation.x = -0.35 - attackCurve * 0.7;
+      model.arms[1].rotation.z = 0.2 + attackCurve * 0.32;
+      model.swordPivot.rotation.x = -0.45 - attackCurve * 1.6;
+    } else {
+      model.swordPivot.rotation.x = 0;
+    }
+
+    if (hero.jumpHeight > 0 || hero.jumpPhase === 'takeoff') {
+      const tuck = hero.jumpPhase === 'takeoff' ? 0.35 : 1;
+      for (let i = 0; i < 2; i++) {
+        model.legs[i].rotation.x = -0.45 * tuck;
+        model.feet[i].position.y = -0.43;
+        model.arms[i].rotation.x = -0.45 - (i === 0 ? 0.2 : 0);
+      }
+      if (hero.attack <= 0) model.swordPivot.rotation.x = 0.12;
+    } else if (hero.jumpPhase === 'landing') {
+      const compression = Math.sin((hero.landing / 0.24) * Math.PI);
+      model.torsoPivot.position.y -= compression * 0.1;
+      model.torsoPivot.rotation.x += compression * 0.1;
+      model.legs[0].rotation.x = model.legs[1].rotation.x = -compression * 0.18;
+      model.arms[0].rotation.x = -compression * 0.35;
+    }
   }
 
   function startAttack() {
@@ -553,7 +654,7 @@ import * as THREE from 'three';
     const strike = (target, range) => {
       const dx = target.x - hero.x, dy = target.y - hero.y;
       const distance = Math.hypot(dx, dy) || 1;
-      return distance < range && (dx * hero.faceX + dy * hero.faceY) / distance > 0.28;
+      return distance < range;
     };
     for (const enemy of enemies) {
       if (!enemy.alive || !strike(enemy, 65)) continue;
@@ -598,14 +699,36 @@ import * as THREE from 'three';
     if (Math.abs(direction.y) < 0.01) hero.vy *= Math.pow(0.08, dt);
     moveWithCollision(hero, hero.vx * dt, hero.vy * dt, 12);
     if (direction.x || direction.y) faceHero(direction.x, direction.y);
+
+    if (input.jumpPressed) {
+      if (hero.jumpPhase === 'grounded') {
+        hero.jumpPhase = 'takeoff';
+        hero.jumpVelocity = 5.2;
+        hero.jumpTimer = 0;
+      }
+      input.jumpPressed = false;
+    }
+    if (hero.jumpPhase === 'takeoff' || hero.jumpPhase === 'airborne') {
+      hero.jumpTimer += dt;
+      hero.jumpVelocity -= 13 * dt;
+      hero.jumpHeight = Math.max(0, hero.jumpHeight + hero.jumpVelocity * dt);
+      if (hero.jumpPhase === 'takeoff' && hero.jumpTimer >= 0.11) hero.jumpPhase = 'airborne';
+      if (hero.jumpHeight <= 0 && hero.jumpVelocity < 0) {
+        hero.jumpHeight = 0;
+        hero.jumpVelocity = 0;
+        hero.jumpPhase = 'landing';
+        hero.landing = 0.24;
+      }
+    } else if (hero.jumpPhase === 'landing') {
+      hero.landing = Math.max(0, hero.landing - dt);
+      if (hero.landing === 0) hero.jumpPhase = 'grounded';
+    }
+
     if (hero.invuln > 0) hero.invuln = Math.max(0, hero.invuln - dt);
     if (hero.attack > 0) hero.attack = Math.max(0, hero.attack - dt);
     if (hero.attackCd > 0) hero.attackCd = Math.max(0, hero.attackCd - dt);
     if (input.attack && hero.attackCd <= 0) startAttack();
-    hero.model.swordPivot.rotation.x = hero.attack > 0 ? -0.45 - Math.sin((1 - hero.attack / 0.34) * Math.PI) * 1.6 : 0;
-    hero.model.root.position.y = Math.hypot(hero.vx, hero.vy) > 8 ? Math.abs(Math.sin(elapsed * 12)) * 0.07 : 0;
-    hero.model.legs[0].rotation.x = Math.sin(elapsed * 11) * Math.min(0.5, Math.hypot(hero.vx, hero.vy) / 300);
-    hero.model.legs[1].rotation.x = -hero.model.legs[0].rotation.x;
+    animateHero(dt, Math.hypot(hero.vx, hero.vy));
     placeHero();
 
     for (const coin of coins) {
