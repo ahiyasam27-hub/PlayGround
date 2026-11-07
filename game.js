@@ -84,13 +84,12 @@ import { EnvironmentAssetManager } from './environment-assets.js';
     slime: mat(0x7ca564, 0.38, { emissive: 0x173a1b, emissiveIntensity: 0.16 }), eye: mat(0xf3e9b4, 0.3, { emissive: 0xc7a950, emissiveIntensity: 0.24 }),
   };
   const shared = {
-    trunk: new THREE.CylinderGeometry(0.13, 0.2, 1.3, 7),
-    foliage: new THREE.ConeGeometry(0.78, 1.25, 7),
     rock: new THREE.DodecahedronGeometry(0.55, 0),
     sphere: new THREE.SphereGeometry(1, 12, 9),
     box: new THREE.BoxGeometry(1, 1, 1),
   };
   const colliders = [];
+  const importedTreePlacements = { broadleaf: [], pine: [] };
   const windClock = { value: 0 };
   let waterGlints = null;
   let ambientPointObject = null;
@@ -328,20 +327,40 @@ import { EnvironmentAssetManager } from './environment-assets.js';
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = 512;
     const context = canvas.getContext('2d');
-    context.fillStyle = '#f2f0e6';
+    context.fillStyle = '#eeeadd';
     context.fillRect(0, 0, 512, 512);
-    for (let i = 0; i < 18000; i++) {
-      const shade = 110 + Math.floor(random01(i + 318) * 120);
-      const alpha = 0.025 + random01(i + 619) * 0.09;
-      const size = 1 + random01(i + 817) * 3;
-      context.fillStyle = `rgba(${shade},${shade},${shade},${alpha})`;
+    // Soft, overlapping moss and soil patches establish broad natural variation.
+    const patchColors = ['rgba(92,112,65,0.12)', 'rgba(126,105,73,0.10)', 'rgba(149,143,111,0.10)', 'rgba(73,98,68,0.08)'];
+    for (let i = 0; i < 230; i++) {
+      context.fillStyle = patchColors[i % patchColors.length];
+      context.beginPath();
+      context.ellipse(random01(i + 301) * 512, random01(i + 401) * 512, 7 + random01(i + 501) * 28, 4 + random01(i + 601) * 18, random01(i + 701) * Math.PI, 0, Math.PI * 2);
+      context.fill();
+    }
+    // Fine soil grain and pale stone flecks keep the material legible at game scale.
+    for (let i = 0; i < 15000; i++) {
+      const shade = 92 + Math.floor(random01(i + 318) * 135);
+      const alpha = 0.025 + random01(i + 619) * 0.085;
+      const size = 0.7 + random01(i + 817) * 2.4;
+      context.fillStyle = `rgba(${shade},${Math.floor(shade * 0.98)},${Math.floor(shade * 0.88)},${alpha})`;
       context.fillRect(random01(i + 101) * 512, random01(i + 203) * 512, size, size);
     }
-    for (let i = 0; i < 140; i++) {
-      const shade = 100 + Math.floor(random01(i + 911) * 110);
-      context.fillStyle = `rgba(${shade},${shade},${shade},0.055)`;
+    for (let i = 0; i < 230; i++) {
+      const x = random01(i + 911) * 512, y = random01(i + 971) * 512;
+      const size = 1 + random01(i + 1031) * 3.8;
+      context.save();
+      context.translate(x, y);
+      context.rotate(random01(i + 1091) * Math.PI);
+      context.fillStyle = i % 3 === 0 ? 'rgba(116,84,54,0.22)' : 'rgba(77,111,63,0.2)';
       context.beginPath();
-      context.ellipse(random01(i + 301) * 512, random01(i + 401) * 512, 4 + random01(i + 501) * 17, 3 + random01(i + 601) * 12, random01(i + 701) * Math.PI, 0, Math.PI * 2);
+      context.ellipse(0, 0, size, size * 0.42, 0, 0, Math.PI * 2);
+      context.fill();
+      context.restore();
+    }
+    for (let i = 0; i < 100; i++) {
+      context.fillStyle = 'rgba(218,215,196,0.25)';
+      context.beginPath();
+      context.ellipse(random01(i + 1201) * 512, random01(i + 1301) * 512, 2 + random01(i + 1401) * 5, 1 + random01(i + 1501) * 3, random01(i + 1601) * Math.PI, 0, Math.PI * 2);
       context.fill();
     }
     const texture = new THREE.CanvasTexture(canvas);
@@ -375,8 +394,10 @@ import { EnvironmentAssetManager } from './environment-assets.js';
   }
 
   function buildTrail() {
-    buildRibbon(pathLines, 44, new THREE.MeshStandardMaterial({ color: 0x9a8058, roughness: 1, side: THREE.DoubleSide }));
-    buildRibbon(pathLines.map((line) => line.map(([x, y]) => [x, y + 9])), 5, new THREE.MeshStandardMaterial({ color: 0xc3a876, roughness: 1, side: THREE.DoubleSide }), 42);
+    buildRibbon(pathLines, 58, new THREE.MeshStandardMaterial({ color: 0x5d5942, roughness: 1, side: THREE.DoubleSide }), 30, 0.012);
+    buildRibbon(pathLines, 48, new THREE.MeshStandardMaterial({ color: 0x8a7854, roughness: 1, side: THREE.DoubleSide }), 30, 0.022);
+    buildRibbon(pathLines, 39, new THREE.MeshStandardMaterial({ color: 0x9b8964, roughness: 1, side: THREE.DoubleSide }), 30, 0.032);
+    buildRibbon(pathLines.map((line) => line.map(([x, y]) => [x, y + 9])), 5, new THREE.MeshStandardMaterial({ color: 0xc3a876, roughness: 1, side: THREE.DoubleSide, transparent: true, opacity: 0.55 }), 42, 0.045);
   }
 
   function buildRiver() {
@@ -437,17 +458,27 @@ import { EnvironmentAssetManager } from './environment-assets.js';
   }
 
   function buildGroundCover() {
-    const grassCount = 1800, flowerCount = 300;
+    const grassCount = 2500, flowerCount = 420;
     const grass = new THREE.InstancedMesh(new THREE.ConeGeometry(0.075, 0.42, 4), windMaterial(0xffffff, 0.18, 0.21), grassCount);
     const flowers = new THREE.InstancedMesh(new THREE.SphereGeometry(0.09, 6, 5), windMaterial(0xffffff, 0.14, 0.09), flowerCount);
-    const shrubs = new THREE.InstancedMesh(shared.sphere, mat(0xffffff), 520);
+    const shrubs = new THREE.InstancedMesh(shared.sphere, mat(0xffffff), 680);
+    const coverPatches = REGIONS.map((biome, region) => Array.from({ length: 7 }, (_, patch) => {
+      let x = biome.x, y = biome.y;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        x = biome.x + (random01(region * 811 + patch * 37 + attempt * 13 + 1901) - 0.5) * 540;
+        y = biome.y + (random01(region * 821 + patch * 41 + attempt * 17 + 1931) - 0.5) * 420;
+        if (x > 35 && x < WORLD - 35 && y > 35 && y < MAP_H - 35 && regionAt(x, y) === region) break;
+      }
+      return { x, y };
+    }));
     const placeCover = (mesh, i, seed, scaleRange, palette, yOffset = 0.025) => {
       const region = i % REGIONS.length;
       const biome = REGIONS[region];
-      let x = biome.x, y = biome.y;
+      const patch = coverPatches[region][Math.floor(random01(seed + 1991) * coverPatches[region].length)];
+      let x = patch.x, y = patch.y;
       for (let attempt = 0; attempt < 18; attempt++) {
-        x = biome.x + (random01(seed + attempt * 7 + 2031) - 0.5) * 600;
-        y = biome.y + (random01(seed + attempt * 7 + 2131) - 0.5) * 500;
+        x = patch.x + (random01(seed + attempt * 7 + 2031) - 0.5) * 210;
+        y = patch.y + (random01(seed + attempt * 7 + 2131) - 0.5) * 180;
         if (x > 16 && x < WORLD - 16 && y > 16 && y < MAP_H - 16
           && regionAt(x, y) === region && distanceToPath(x, y) > 25
           && distanceToRiver(x, y) > 72 && Math.hypot(x - 800, y - 600) > 118) break;
@@ -477,10 +508,6 @@ import { EnvironmentAssetManager } from './environment-assets.js';
     const treeCount = 28;
     for (let regionIndex = 0; regionIndex < REGIONS.length; regionIndex++) {
       const biome = REGIONS[regionIndex];
-      const trunks = new THREE.InstancedMesh(shared.trunk, mat(0xffffff), treeCount);
-      const coniferLayers = [0, 1, 2].map(() => new THREE.InstancedMesh(shared.foliage, windMaterial(0xffffff, 0.028, 0.63), treeCount));
-      const canopyLayers = [0, 1, 2].map(() => new THREE.InstancedMesh(shared.sphere, windMaterial(0xffffff, 0.022, 0.95), treeCount));
-      let conifers = 0, broadleaf = 0;
       for (let i = 0; i < treeCount; i++) {
         const seed = regionIndex * 1009 + i * 37;
         let x = biome.x, y = biome.y, valid = false;
@@ -495,47 +522,19 @@ import { EnvironmentAssetManager } from './environment-assets.js';
           if (valid) break;
         }
         if (!valid) continue;
-        const p = worldAt(x, y), scale = 0.78 + random01(seed + 23) * 0.62;
+        const p = worldAt(x, y, terrainAt(x, y, 0.02));
+        const scale = 0.78 + random01(seed + 23) * 0.62;
         const isBroadleaf = random01(seed + 67) < (regionIndex === 2 ? 0.72 : regionIndex === 1 ? 0.08 : 0.42);
-        temp.position.set(p.x, p.y + 0.66 * scale, p.z);
-        temp.rotation.set(0, random01(seed + 31) * Math.PI * 2, (random01(seed + 32) - 0.5) * 0.05);
-        temp.scale.set(scale, scale, scale); temp.updateMatrix();
-        trunks.setMatrixAt(i, temp.matrix);
-        trunks.setColorAt(i, new THREE.Color(regionIndex === 2 ? 0x76583a : regionIndex === 1 ? 0x68594d : 0x584332).multiplyScalar(0.82 + random01(seed + 82) * 0.35));
-        if (isBroadleaf) {
-          for (let layer = 0; layer < 3; layer++) {
-            temp.position.set(p.x + (layer - 1) * 0.14 * scale, p.y + (1.72 + (layer === 1 ? 0.15 : 0)) * scale, p.z + (layer % 2 ? 0.12 : -0.12) * scale);
-            temp.rotation.set(0, random01(seed + layer + 41) * Math.PI * 2, 0);
-            const crown = scale * (layer === 1 ? 0.78 : 0.68);
-            temp.scale.set(crown, crown * 0.76, crown); temp.updateMatrix();
-            canopyLayers[layer].setMatrixAt(broadleaf, temp.matrix);
-            canopyLayers[layer].setColorAt(broadleaf, new THREE.Color(biome.leaf).offsetHSL((random01(seed + layer + 52) - 0.5) * 0.06, 0, 0.07 + (random01(seed + layer + 56) - 0.5) * 0.12));
-          }
-          broadleaf++;
-        } else {
-          for (let layer = 0; layer < 3; layer++) {
-            temp.position.set(p.x, p.y + (1.2 + layer * 0.52) * scale, p.z);
-            temp.rotation.set(0, random01(seed + 45) * Math.PI * 2, 0);
-            const crown = scale * (1.12 - layer * 0.13);
-            temp.scale.set(crown, scale, crown); temp.updateMatrix();
-            coniferLayers[layer].setMatrixAt(conifers, temp.matrix);
-            coniferLayers[layer].setColorAt(conifers, new THREE.Color(biome.leaf).offsetHSL((random01(seed + layer + 63) - 0.5) * 0.06, 0, 0.07 + (random01(seed + layer + 68) - 0.5) * 0.1));
-          }
-          conifers++;
-        }
-        // Only the trunk blocks the player; the wide canopy remains walk-through.
+        const placements = importedTreePlacements[isBroadleaf ? 'broadleaf' : 'pine'];
+        placements.push({
+          position: p,
+          rotationY: random01(seed + 31) * Math.PI * 2,
+          scale,
+          region: biome.name,
+          biome: isBroadleaf ? 'woodland' : 'coniferous',
+        });
+        // Keep the original trunk-only collision footprint; imported canopies stay walk-through.
         colliders.push({ x, y, r: 7.5 * scale });
-      }
-      trunks.instanceMatrix.needsUpdate = true;
-      if (trunks.instanceColor) trunks.instanceColor.needsUpdate = true;
-      trunks.castShadow = true; trunks.receiveShadow = true; worldGroup.add(trunks);
-      for (const [layers, count] of [[coniferLayers, conifers], [canopyLayers, broadleaf]]) {
-        for (const mesh of layers) {
-          mesh.count = count;
-          mesh.instanceMatrix.needsUpdate = true;
-          if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-          mesh.castShadow = false; mesh.receiveShadow = true; worldGroup.add(mesh);
-        }
       }
     }
 
@@ -610,31 +609,36 @@ import { EnvironmentAssetManager } from './environment-assets.js';
   buildEnvironment();
 
   const environmentAssets = new EnvironmentAssetManager(worldGroup, {
-    onStatus: ({ state, loaded = 0, total = 0, error }) => {
+    onStatus: ({ state, id, loaded = 0, total = 0, error }) => {
       const status = ui.assetStatus;
       status.hidden = false;
       if (state === 'loading') {
         const progress = total > 0 ? ` · ${Math.round((loaded / total) * 100)}%` : '';
-        status.textContent = `Loading Verdant Reach tree${progress}`;
+        status.textContent = `Loading ${id}${progress}`;
       } else if (state === 'loaded') {
-        status.textContent = 'Environment model ready · Verdant Reach';
+        status.textContent = `Environment model ready · ${id}`;
         window.setTimeout(() => { status.hidden = true; }, 4000);
       } else if (state === 'error') {
         status.textContent = `Environment model failed to load: ${error?.message || 'unknown error'}`;
       }
     },
   });
-  const treePlacements = [
+  const legacyTreePlacements = [
     { x: 360, y: 190, rotationY: 0.4, scale: 1, region: 'Verdant Reach', biome: 'woodland' },
     { x: 390, y: 365, rotationY: 2.1, scale: 0.88, region: 'Verdant Reach', biome: 'woodland' },
   ].map(({ x, y, ...placement }) => ({
     ...placement,
     position: worldAt(x, y, terrainAt(x, y, 0.02)),
   }));
-  environmentAssets.place('./public/assets/environment/stylized-tree.glb', treePlacements, {
-    id: 'lowlypoly-stylized-tree',
-    height: 4.2,
-  }).catch((error) => console.error('Unable to load Verdant Reach environment model:', error));
+  const treeAssets = [
+    ['./public/assets/environment/broadleaf-tree.glb', importedTreePlacements.broadleaf, { id: 'stefan-detailed-broadleaf', height: 4.8 }],
+    ['./public/assets/environment/low-poly-pine.glb', importedTreePlacements.pine, { id: 'afloat-low-poly-pine', height: 4.9 }],
+    ['./public/assets/environment/stylized-tree.glb', legacyTreePlacements, { id: 'lowlypoly-stylized-tree', height: 4.2 }],
+  ];
+  for (const [url, placements, options] of treeAssets) {
+    environmentAssets.place(url, placements, options)
+      .catch((error) => console.error(`Unable to load environment model ${options.id}:`, error));
+  }
 
   function createHeroModel() {
     const root = new THREE.Group();

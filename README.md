@@ -19,8 +19,12 @@
 
 ## Environment models
 
-Place environment `.glb` and `.gltf` assets under `public/assets/environment/`; keep attribution and license details alongside each model (the demo uses `stylized-tree.glb.attribution.json`). The demo asset is **Stylized Tree by Lowlypoly**, used under **CC Attribution**; see [its attribution record](public/assets/environment/stylized-tree.glb.attribution.json) and [Sketchfab page](https://sketchfab.com/3d-models/none-96bfe5f5fe3e43e9b4db5ab78fd12710).
+Environment `.glb` and `.gltf` assets live under `public/assets/environment/`; attribution and license details are stored alongside each model.
+
+- **Stylized Tree** by [Lowlypoly](https://sketchfab.com/3d-models/none-96bfe5f5fe3e43e9b4db5ab78fd12710), **CC Attribution**: [record](public/assets/environment/stylized-tree.glb.attribution.json). Kept at its two original Verdant Reach placements.
+- **Stylized Tree** by [stefan](https://sketchfab.com/3d-models/stylized-tree-4475c38dac544c8abe49ffa602df6595), **CC Attribution**: [record](public/assets/environment/broadleaf-tree.glb.attribution.json). Used for generated broadleaf placements.
+- **Low Poly Pine** by [Afloat Above the World](https://sketchfab.com/3d-models/low-poly-pine-107e3eab9dcb4e29a282c6709178752f), **CC Attribution**: [record](public/assets/environment/low-poly-pine.glb.attribution.json). Used for generated conifer placements.
 
 `game.js` creates an `EnvironmentAssetManager` from `environment-assets.js` and calls `place(url, placements, options)`. Placements carry a world position, optional rotation/scale, and region/biome labels. Models are cached by ID, normalized to the requested height, and shared across placed instances. Status callbacks cover loading progress, success, and errors.
 
-For this app served from its project root, the demo uses `./public/assets/environment/stylized-tree.glb`. Keep a standalone GLB path relative to the page URL. For a `.gltf`, upload its referenced textures and buffers beside it in the same relative folder structure: GLTFLoader resolves those dependency paths relative to the `.gltf` document.
+For this app served from its project root, asset paths are relative to the page URL. For a `.gltf`, upload its referenced textures and buffers beside it in the same relative folder structure: GLTFLoader resolves those dependency paths relative to the `.gltf` document.
