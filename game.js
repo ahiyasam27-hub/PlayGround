@@ -39,22 +39,33 @@ import * as THREE from 'three';
   scene.add(sun);
 
   const SCALE = 30;
-  const REGION = 720;
-  const MAP_H = 440;
+  const WORLD = 1600;
+  const MAP_H = 1200;
   const REGIONS = [
-    { name: 'Verdant Reach', boss: 'Mossfang', ground: 0x687950, tile: 0x77865a, accent: 0xa2ad6c, sky: 0x9aaca7, leaf: 0x386047 },
-    { name: 'Frostveil Peaks', boss: 'The Glacier Warden', ground: 0x718b98, tile: 0x92aab0, accent: 0xc4d8d8, sky: 0x9bb7c8, leaf: 0xb9d2d7 },
-    { name: 'Sunken Coast', boss: 'Tidecaller', ground: 0x3e7270, tile: 0x568b82, accent: 0x9bc7a0, sky: 0x82b9b8, leaf: 0x2d6962 },
-    { name: 'Ashen March', boss: 'Cindermaw', ground: 0x77503e, tile: 0x956346, accent: 0xc68a5c, sky: 0xc29379, leaf: 0x7f4739 },
-    { name: 'Starfall Crown', boss: 'The Void King', ground: 0x514b72, tile: 0x6a6090, accent: 0xb2a4d1, sky: 0xaaa1c7, leaf: 0x61518b },
+    { name: 'Verdant Reach', boss: 'Mossfang', x: 255, y: 260, ground: 0x687950, tile: 0x77865a, accent: 0xa2ad6c, sky: 0x9aaca7, leaf: 0x386047 },
+    { name: 'Frostveil Peaks', boss: 'The Glacier Warden', x: 390, y: 930, ground: 0x718b98, tile: 0x92aab0, accent: 0xc4d8d8, sky: 0x9bb7c8, leaf: 0xb9d2d7 },
+    { name: 'Sunken Coast', boss: 'Tidecaller', x: 1330, y: 275, ground: 0x3e7270, tile: 0x568b82, accent: 0x9bc7a0, sky: 0x82b9b8, leaf: 0x2d6962 },
+    { name: 'Ashen March', boss: 'Cindermaw', x: 800, y: 600, ground: 0x77503e, tile: 0x956346, accent: 0xc68a5c, sky: 0xc29379, leaf: 0x7f4739 },
+    { name: 'Starfall Crown', boss: 'The Void King', x: 1260, y: 930, ground: 0x514b72, tile: 0x6a6090, accent: 0xb2a4d1, sky: 0xaaa1c7, leaf: 0x61518b },
   ];
-  const WORLD = REGION * REGIONS.length;
   const input = { left: false, right: false, up: false, down: false, attack: false, jump: false, jumpPressed: false, stickX: 0, stickY: 0 };
   const rightAxis = new THREE.Vector3(Math.SQRT1_2, 0, -Math.SQRT1_2);
   const depthAxis = new THREE.Vector3(Math.SQRT1_2, 0, Math.SQRT1_2);
   const temp = new THREE.Object3D();
   const v3 = (x, y, z) => new THREE.Vector3(x, y, z);
-  const worldAt = (x, y, height = 0) => new THREE.Vector3(
+  const terrainHeight = (x, y) => {
+    const hills = [
+      [210, 470, 1.15, 235], [510, 1010, 2.6, 250], [790, 240, 1.5, 230],
+      [1060, 680, 1.35, 285], [1370, 1000, 2.25, 255], [1450, 210, 0.9, 210],
+    ];
+    let h = 0.12 * Math.sin(x / 92) * Math.cos(y / 107) + 0.08 * Math.sin((x + y) / 58);
+    for (const [cx, cy, amount, radius] of hills) {
+      const d = Math.hypot((x - cx) * 0.88, y - cy);
+      h += amount * Math.exp(-(d * d) / (radius * radius));
+    }
+    return Math.max(0, h);
+  };
+  const worldAt = (x, y, height = terrainHeight(x, y)) => new THREE.Vector3(
     (x * rightAxis.x + y * depthAxis.x) / SCALE,
     height,
     (x * rightAxis.z + y * depthAxis.z) / SCALE,
@@ -82,7 +93,46 @@ import * as THREE from 'three';
   let width = 960, height = 540, screen = 'title', last = performance.now(), elapsed = 0, toastTimer = 0;
   let hero, enemies, coins, checkpoints, gates, bosses, particles, keysFound = 0;
   const random01 = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
-  const regionAt = (x) => Math.max(0, Math.min(REGIONS.length - 1, Math.floor(x / REGION)));
+  const regionAt = (x, y) => {
+    let nearest = 0, distance = Infinity;
+    for (let i = 0; i < REGIONS.length; i++) {
+      const region = REGIONS[i], d = (x - region.x) ** 2 + (y - region.y) ** 2;
+      if (d < distance) { nearest = i; distance = d; }
+    }
+    return nearest;
+  };
+  const riverX = (y) => 790 + Math.sin(y / 148) * 145 + Math.sin(y / 61) * 38;
+  const BRIDGE_CROSSINGS = [330, 514, 764, 850];
+  const onBridge = (x, y) => BRIDGE_CROSSINGS.some((crossing) => Math.abs(y - crossing) < 34 && Math.abs(x - riverX(crossing)) < 72);
+  const inRiver = (x, y) => distanceToRiver(x, y) < 62 && !onBridge(x, y);
+  const pathLines = [
+    [[90, 450], [170, 360], [255, 260], [775, 514], [800, 600]],
+    [[255, 260], [875, 330], [1050, 320], [1330, 275]],
+    [[430, 930], [570, 850], [658, 764], [730, 700], [800, 600]],
+    [[430, 930], [600, 900], [753, 850], [1000, 875], [1260, 930]],
+    [[800, 600], [1000, 480], [1160, 380], [1330, 275]],
+  ];
+  const distanceToPath = (x, y) => {
+    let nearest = Infinity;
+    for (const line of pathLines) for (let i = 0; i < line.length - 1; i++) {
+      const [ax, ay] = line[i], [bx, by] = line[i + 1];
+      const dx = bx - ax, dy = by - ay;
+      const t = THREE.MathUtils.clamp(((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy), 0, 1);
+      nearest = Math.min(nearest, Math.hypot(x - ax - t * dx, y - ay - t * dy));
+    }
+    return nearest;
+  };
+  const distanceToRiver = (x, y) => Math.abs(x - riverX(y));
+  const terrainAt = (x, y, offset = 0) => terrainHeight(x, y) + offset;
+  const regionColorAt = (x, y) => {
+    const color = new THREE.Color(0), weights = REGIONS.map((region) => {
+      const d = Math.hypot(x - region.x, y - region.y);
+      return Math.exp(-(d * d) / (2 * 330 * 330));
+    });
+    const total = weights.reduce((sum, weight) => sum + weight, 0) || 1;
+    REGIONS.forEach((region, index) => color.add(new THREE.Color(region.ground).multiplyScalar(weights[index] / total)));
+    return color;
+  };
 
   function resize() {
     const rect = shell.getBoundingClientRect();
@@ -113,38 +163,28 @@ import * as THREE from 'three';
   }
 
   function buildEnvironment() {
-    const marginX = 900, marginY = 600;
-    const groundWidth = (WORLD + marginX * 2) / SCALE;
-    const groundHeight = (MAP_H + marginY * 2) / SCALE;
-    const groundGeo = new THREE.PlaneGeometry(groundWidth, groundHeight, 300, 96);
-    const positions = groundGeo.attributes.position;
-    const colors = new Float32Array(positions.count * 3);
-    const biomeColors = REGIONS.map((region) => new THREE.Color(region.ground));
-    for (let i = 0; i < positions.count; i++) {
-      const x = WORLD / 2 + positions.getX(i) * SCALE;
-      const boundary = Math.round(x / REGION) * REGION;
-      const left = Math.max(0, Math.min(REGIONS.length - 1, Math.floor((boundary - 1) / REGION)));
-      const right = Math.max(0, Math.min(REGIONS.length - 1, left + 1));
-      let color = biomeColors[regionAt(Math.max(0, Math.min(WORLD - 1, x)))].clone();
-      if (boundary > 0 && boundary < WORLD && Math.abs(x - boundary) < 110) {
-        const t = THREE.MathUtils.smoothstep(x, boundary - 110, boundary + 110);
-        color = biomeColors[left].clone().lerp(biomeColors[right], t);
+    const margin = 420, terrainWidth = WORLD + margin * 2, terrainDepth = MAP_H + margin * 2;
+    const cols = 108, rows = 90;
+    const positions = [], colors = [], indices = [];
+    for (let row = 0; row <= rows; row++) for (let col = 0; col <= cols; col++) {
+      const x = -margin + terrainWidth * col / cols, y = -margin + terrainDepth * row / rows;
+      const p = worldAt(x, y, terrainHeight(x, y) - 0.12);
+      positions.push(p.x, p.y, p.z);
+      const color = regionColorAt(x, y).multiplyScalar(0.94 + random01(row * 131 + col * 17) * 0.12);
+      colors.push(color.r, color.g, color.b);
+      if (row < rows && col < cols) {
+        const a = row * (cols + 1) + col, b = a + cols + 1;
+        indices.push(a, b, a + 1, b, b + 1, a + 1);
       }
-      const variation = 0.88 + random01(i * 19 + 3) * 0.2;
-      color.multiplyScalar(variation);
-      colors[i * 3] = color.r;
-      colors[i * 3 + 1] = color.g;
-      colors[i * 3 + 2] = color.b;
     }
-    groundGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    const groundMaterial = new THREE.MeshStandardMaterial({ map: createGroundTexture(), vertexColors: true, roughness: 1 });
-    const ground = new THREE.Mesh(groundGeo, groundMaterial);
-    ground.position.copy(worldAt(WORLD / 2, MAP_H / 2, -0.12));
-    ground.rotation.set(-Math.PI / 2, 0, Math.PI / 4);
-    ground.receiveShadow = true;
-    ground.frustumCulled = false;
-    worldGroup.add(ground);
+    const groundGeo = new THREE.BufferGeometry();
+    groundGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    groundGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    groundGeo.setIndex(indices); groundGeo.computeVertexNormals();
+    worldGroup.add(new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ map: createGroundTexture(), vertexColors: true, roughness: 1, side: THREE.DoubleSide })));
     buildTrail();
+    buildRiver();
+    buildLandmarks();
     buildTreesAndRocks();
     buildGroundCover();
     buildDecorativeLights();
@@ -178,72 +218,84 @@ import * as THREE from 'three';
     return texture;
   }
 
-  function trailCenter(x) {
-    return MAP_H / 2 + Math.sin(x / 275) * 32 + Math.sin(x / 107) * 11;
+  function buildRibbon(lines, width, material, segments = 28) {
+    for (const line of lines) {
+      const points = [];
+      for (let i = 0; i < line.length - 1; i++) {
+        const a = line[i], b = line[i + 1], count = Math.max(2, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / segments));
+        for (let j = 0; j < count; j++) { const t = j / count; points.push([THREE.MathUtils.lerp(a[0], b[0], t), THREE.MathUtils.lerp(a[1], b[1], t)]); }
+      }
+      points.push(line[line.length - 1]);
+      const vertices = [], indices = [];
+      for (let i = 0; i < points.length; i++) {
+        const [x, y] = points[i], before = points[Math.max(0, i - 1)], after = points[Math.min(points.length - 1, i + 1)];
+        const length = Math.hypot(after[0] - before[0], after[1] - before[1]) || 1;
+        const nx = -(after[1] - before[1]) / length, ny = (after[0] - before[0]) / length;
+        for (const side of [-1, 1]) { const p = worldAt(x + nx * width * side / 2, y + ny * width * side / 2, terrainHeight(x, y) + 0.025); vertices.push(p.x, p.y, p.z); }
+        if (i < points.length - 1) { const a = i * 2; indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3)); geometry.setIndex(indices); geometry.computeVertexNormals();
+      worldGroup.add(new THREE.Mesh(geometry, material));
+    }
   }
 
   function buildTrail() {
-    const segments = Math.ceil(WORLD / 8);
-    const vertices = new Float32Array((segments + 1) * 2 * 3);
-    const colors = new Float32Array((segments + 1) * 2 * 3);
-    const indices = [];
-    const edgeColor = new THREE.Color(0x806344), centerColor = new THREE.Color(0xb19361);
-    for (let i = 0; i <= segments; i++) {
-      const x = WORLD * i / segments;
-      const center = trailCenter(x);
-      const width = 102 + Math.sin(x / 145) * 13 + (random01(i + 153) - 0.5) * 10;
-      for (let side = 0; side < 2; side++) {
-        const edge = side === 0 ? -1 : 1;
-        const irregular = (random01(i * 2 + side + 440) - 0.5) * 10;
-        const y = center + edge * (width / 2 + irregular);
-        const p = worldAt(x, y, -0.045);
-        const index = (i * 2 + side) * 3;
-        vertices[index] = p.x; vertices[index + 1] = p.y; vertices[index + 2] = p.z;
-        const color = edgeColor.clone().lerp(centerColor, 0.28 + random01(i * 5 + side + 67) * 0.54);
-        colors[index] = color.r; colors[index + 1] = color.g; colors[index + 2] = color.b;
-      }
-      if (i < segments) {
-        const a = i * 2;
-        indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
-      }
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geometry.setIndex(indices);
-    geometry.computeVertexNormals();
-    const trail = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 1, side: THREE.DoubleSide }));
-    trail.frustumCulled = false;
-    worldGroup.add(trail);
+    buildRibbon(pathLines, 44, new THREE.MeshStandardMaterial({ color: 0x9a8058, roughness: 1, side: THREE.DoubleSide }));
+    buildRibbon(pathLines.map((line) => line.map(([x, y]) => [x, y + 9])), 5, new THREE.MeshStandardMaterial({ color: 0xc3a876, roughness: 1, side: THREE.DoubleSide }), 42);
+  }
 
-    const stones = new THREE.InstancedMesh(shared.rock, mats.rock, 520);
-    for (let i = 0; i < 520; i++) {
-      const x = random01(i + 128) * WORLD;
-      const width = 102 + Math.sin(x / 145) * 13;
-      const y = trailCenter(x) + (random01(i + 228) - 0.5) * width * 0.86;
-      temp.position.copy(worldAt(x, y, -0.005));
-      temp.rotation.set(random01(i + 328) * 0.18, random01(i + 428) * Math.PI, random01(i + 528) * 0.18);
-      temp.scale.set(0.12 + random01(i + 628) * 0.28, 0.025 + random01(i + 728) * 0.04, 0.08 + random01(i + 828) * 0.2);
-      temp.updateMatrix();
-      stones.setMatrixAt(i, temp.matrix);
-      stones.setColorAt(i, new THREE.Color([0x8e816b, 0xb0a184, 0x766c5b][i % 3]).multiplyScalar(0.8 + random01(i + 928) * 0.4));
+  function buildRiver() {
+    const line = [];
+    for (let y = 0; y <= MAP_H; y += 14) line.push([riverX(y), y]);
+    buildRibbon([line], 112, new THREE.MeshStandardMaterial({ color: 0x397d91, roughness: 0.3, metalness: 0.08, transparent: true, opacity: 0.9, side: THREE.DoubleSide }), 14);
+    const bank = new THREE.MeshStandardMaterial({ color: 0xa59a72, roughness: 1, side: THREE.DoubleSide });
+    for (const crossing of BRIDGE_CROSSINGS) {
+      const group = new THREE.Group(), p = worldAt(riverX(crossing), crossing, terrainHeight(riverX(crossing), crossing) + 0.16);
+      addMesh(group, new THREE.BoxGeometry(4.2, 0.2, 1.55), mat(0x806044), v3(0, 0, 0));
+      for (const side of [-1, 1]) addMesh(group, new THREE.BoxGeometry(4.2, 0.12, 0.12), mat(0xb49464), v3(0, 0.24, side * 0.68));
+      group.position.copy(p); group.rotation.y = Math.PI / 4; worldGroup.add(group);
+      buildRibbon([[[riverX(crossing) - 110, crossing - 12], [riverX(crossing) + 110, crossing + 12]]], 5, bank, 18);
     }
-    stones.instanceMatrix.needsUpdate = true;
-    if (stones.instanceColor) stones.instanceColor.needsUpdate = true;
-    stones.castShadow = false;
-    stones.receiveShadow = true;
-    worldGroup.add(stones);
+  }
+
+  function buildLandmarks() {
+    const village = new THREE.Group();
+    const hutMaterial = mat(0xc3a36a), wallMaterial = mat(0x9c7d52), roofMaterial = mat(0x694838);
+    for (const [x, y, scale] of [[750, 560, 1], [850, 555, 0.82], [800, 655, 0.72]]) {
+      const p = worldAt(x, y); const hut = new THREE.Group();
+      addMesh(hut, new THREE.BoxGeometry(1.35, 0.95, 1.15), wallMaterial, v3(0, 0.48, 0), { castShadow: true });
+      addMesh(hut, new THREE.ConeGeometry(1.0, 0.72, 4), roofMaterial, v3(0, 1.25, 0), { rotation: [0, Math.PI / 4, 0] });
+      hut.scale.setScalar(scale); hut.position.set(p.x, p.y, p.z); village.add(hut);
+    }
+    worldGroup.add(village);
+    const shrine = (x, y, color, size = 1) => {
+      const p = worldAt(x, y), group = new THREE.Group(), stone = mat(color);
+      for (let i = 0; i < 4; i++) {
+        const a = i * Math.PI / 2, xx = Math.cos(a) * 1.25, zz = Math.sin(a) * 1.25;
+        addMesh(group, new THREE.CylinderGeometry(0.16, 0.2, 1.65, 6), stone, v3(xx, 0.82, zz));
+      }
+      addMesh(group, new THREE.ConeGeometry(1.75, 0.62, 4), stone, v3(0, 1.95, 0), { rotation: [0, Math.PI / 4, 0] });
+      group.position.set(p.x, p.y, p.z); group.scale.setScalar(size); worldGroup.add(group);
+    };
+    shrine(430, 940, 0x778783, 1.35); // ancient mountain ruins
+    shrine(1260, 950, 0x625a80, 1.55); // starfall keep
+    // A small cave mouth tucked into the western foothills.
+    const cavePos = worldAt(130, 760), cave = addMesh(worldGroup, new THREE.TorusGeometry(0.95, 0.22, 7, 12, Math.PI), mat(0x4b5148), v3(cavePos.x, cavePos.y + 0.7, cavePos.z), { rotation: [Math.PI / 2, 0, Math.PI / 4] });
+    addMesh(worldGroup, new THREE.SphereGeometry(0.72, 12, 8), mat(0x111719), v3(cavePos.x, cavePos.y + 0.52, cavePos.z), { scale: [1, 0.8, 0.32] });
   }
 
   function buildGroundCover() {
     const grassGeo = new THREE.ConeGeometry(0.085, 0.38, 4);
     const grass = new THREE.InstancedMesh(grassGeo, mat(0x72804b), 1100);
     for (let i = 0; i < 1100; i++) {
-      const x = random01(i + 2031) * WORLD;
-      let y = 18 + random01(i + 2131) * (MAP_H - 36);
-      if (Math.abs(y - trailCenter(x)) < 78) y += y < MAP_H / 2 ? -75 : 75;
-      y = Math.max(10, Math.min(MAP_H - 10, y));
-      temp.position.copy(worldAt(x, y, 0.025));
+      let x = 0, y = 0;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        x = 18 + random01(i * 11 + attempt + 2031) * (WORLD - 36);
+        y = 18 + random01(i * 11 + attempt + 2131) * (MAP_H - 36);
+        if (distanceToPath(x, y) > 30 && distanceToRiver(x, y) > 178) break;
+      }
+      temp.position.copy(worldAt(x, y, terrainAt(x, y, 0.025)));
       temp.rotation.set(0, random01(i + 2231) * Math.PI, (random01(i + 2331) - 0.5) * 0.28);
       const scale = 0.35 + random01(i + 2431) * 0.9;
       temp.scale.set(scale, scale, scale);
@@ -260,20 +312,22 @@ import * as THREE from 'three';
 
   function buildTreesAndRocks() {
     for (let regionIndex = 0; regionIndex < REGIONS.length; regionIndex++) {
-      for (let i = 0; i < 16; i++) {
-        const seed = regionIndex * 17 + i;
-        const x = regionIndex * REGION + 34 + random01(seed + 20) * (REGION - 68);
-        const edge = random01(seed + 21) < 0.5 ? 0 : 1;
-        const y = edge === 0
-          ? 24 + random01(seed + 22) * (MAP_H / 2 - 96)
-          : MAP_H / 2 + 72 + random01(seed + 22) * (MAP_H / 2 - 96);
-        const region = regionAt(x), g = new THREE.Group();
-        const p = worldAt(x, y);
-        g.position.set(p.x, 0, p.z);
+      const biome = REGIONS[regionIndex];
+      for (let i = 0; i < 22; i++) {
+        const seed = regionIndex * 101 + i;
+        let x = biome.x, y = biome.y;
+        for (let attempt = 0; attempt < 20; attempt++) {
+          x = biome.x + (random01(seed * 23 + attempt + 20) - 0.5) * 560;
+          y = biome.y + (random01(seed * 23 + attempt + 21) - 0.5) * 440;
+          if (x > 24 && x < WORLD - 24 && y > 24 && y < MAP_H - 24 && regionAt(x, y) === regionIndex && distanceToPath(x, y) > 68 && distanceToRiver(x, y) > 182 && Math.hypot(x - 800, y - 600) > 145) break;
+        }
+        if (x < 24 || x > WORLD - 24 || y < 24 || y > MAP_H - 24 || distanceToPath(x, y) < 48 || distanceToRiver(x, y) < 175) continue;
+        const g = new THREE.Group(), p = worldAt(x, y);
+        g.position.set(p.x, p.y, p.z);
         g.rotation.y = Math.PI / 4;
         const s = 0.82 + random01(seed + 23) * 0.48;
         addMesh(g, shared.trunk, mats.bark, v3(0, 0.66 * s, 0), { scale: [s, s, s] });
-        const leafMat = region === 1 ? mats.snow : mat(REGIONS[region].leaf);
+        const leafMat = regionIndex === 1 ? mats.snow : mat(biome.leaf);
         for (let layer = 0; layer < 3; layer++) {
           addMesh(g, shared.foliage, leafMat, v3(0, (1.25 + layer * 0.5) * s, 0), { scale: [s * (1.15 - layer * 0.12), s, s * (1.15 - layer * 0.12)] });
         }
@@ -281,12 +335,16 @@ import * as THREE from 'three';
         colliders.push({ x, y, r: 22 * s });
       }
     }
-    for (let i = 0; i < 34; i++) {
-      const region = i % REGIONS.length;
-      const x = region * REGION + 80 + random01(i + 100) * (REGION - 160);
-      const y = 55 + random01(i + 700) * (MAP_H - 110);
-      if (Math.abs(y - MAP_H / 2) < 70) continue;
-      const p = worldAt(x, y, 0.18);
+    for (let i = 0; i < 42; i++) {
+      const biome = REGIONS[i % REGIONS.length];
+      let x = biome.x, y = biome.y;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        x = biome.x + (random01(i * 19 + attempt + 100) - 0.5) * 460;
+        y = biome.y + (random01(i * 19 + attempt + 700) - 0.5) * 380;
+        if (x > 22 && x < WORLD - 22 && y > 22 && y < MAP_H - 22 && distanceToPath(x, y) > 54 && distanceToRiver(x, y) > 178) break;
+      }
+      if (distanceToPath(x, y) < 40 || distanceToRiver(x, y) < 170) continue;
+      const p = worldAt(x, y, terrainAt(x, y, 0.18));
       const rock = addMesh(worldGroup, shared.rock, mat(i % 3 ? 0x68706a : 0x817c70), p, { scale: [0.55 + random01(i) * 0.6, 0.35 + random01(i + 2) * 0.35, 0.48 + random01(i + 3) * 0.5], rotation: [random01(i + 4), random01(i + 5), random01(i + 6)] });
       rock.castShadow = true;
       colliders.push({ x, y, r: 17 });
@@ -377,7 +435,7 @@ import * as THREE from 'three';
     const portal = addMesh(group, new THREE.PlaneGeometry(1.45, 1.85), mat(gate.open ? 0xffcf72 : 0x4b6570, 0.3, { transparent: true, opacity: gate.open ? 0.55 : 0.24, emissive: gate.open ? 0x8e5719 : 0x10191d, emissiveIntensity: 0.8, side: THREE.DoubleSide }), v3(0, 1.08, 0.24));
     portal.userData.portal = true;
     const p = worldAt(gate.x, gate.y);
-    group.position.set(p.x, 0, p.z);
+    group.position.set(p.x, p.y, p.z);
     group.rotation.y = Math.PI / 4;
     gate.group = group;
     gate.portal = portal;
@@ -389,7 +447,7 @@ import * as THREE from 'three';
     addMesh(group, new THREE.CylinderGeometry(0.055, 0.08, 0.95, 7), mats.bark, v3(0, 0.48, 0));
     const flame = addMesh(group, new THREE.OctahedronGeometry(0.19, 0), mat(0xffcb72, 0.25, { emissive: 0xff6e1d, emissiveIntensity: 1.4 }), v3(0, 1.08, 0));
     const p = worldAt(cp.x, cp.y);
-    group.position.set(p.x, 0, p.z);
+    group.position.set(p.x, p.y, p.z);
     objectGroup.add(group);
     cp.group = group;
     cp.flame = flame;
@@ -412,14 +470,14 @@ import * as THREE from 'three';
     for (const enemy of enemies) {
       const model = createSlimeModel();
       const p = worldAt(enemy.x, enemy.y);
-      model.root.position.set(p.x, 0, p.z);
+      model.root.position.set(p.x, p.y, p.z);
       actorGroup.add(model.root);
       enemy.model = model;
     }
     for (const boss of bosses) {
       const model = createSlimeModel(true, boss.region);
       const p = worldAt(boss.x, boss.y);
-      model.root.position.set(p.x, 0, p.z);
+      model.root.position.set(p.x, p.y, p.z);
       actorGroup.add(model.root);
       const bar = new THREE.Group();
       addMesh(bar, shared.box, mat(0x202c32), v3(0, 1.92, 0), { scale: [1.35, 0.11, 0.09] });
@@ -432,17 +490,22 @@ import * as THREE from 'three';
 
   function reset() {
     while (actorGroup.children.length) actorGroup.remove(actorGroup.children[0]);
-    hero = { x: 65, y: 220, vx: 0, vy: 0, faceX: 1, faceY: 0, targetYaw: Math.PI / 4, hp: 5, invuln: 0, attack: 0, attackCd: 0, attackHit: false, jumpHeight: 0, jumpVelocity: 0, jumpPhase: 'grounded', jumpTimer: 0, landing: 0, gaitPhase: 0, moveBlend: 0, runBlend: 0, idleTime: 0, checkpoint: { x: 65, y: 220 }, model: createHeroModel() };
+    while (objectGroup.children.length) objectGroup.remove(objectGroup.children[0]);
+    const start = { x: 225, y: 300 };
+    hero = { x: start.x, y: start.y, vx: 0, vy: 0, faceX: 1, faceY: 0, targetYaw: Math.PI / 4, hp: 5, invuln: 0, attack: 0, attackCd: 0, attackHit: false, jumpHeight: 0, jumpVelocity: 0, jumpPhase: 'grounded', jumpTimer: 0, landing: 0, gaitPhase: 0, moveBlend: 0, runBlend: 0, idleTime: 0, checkpoint: { ...start }, model: createHeroModel() };
     actorGroup.add(hero.model.root);
     enemies = []; coins = []; checkpoints = []; gates = []; bosses = []; particles = []; keysFound = 0;
-    for (let r = 0; r < REGIONS.length; r++) {
-      const offset = r * REGION;
-      for (const [dx, y] of [[225, 150], [370, 300], [475, 115]]) enemies.push({ x: offset + dx, y, homeX: offset + dx, homeY: y, hp: 2, alive: true, phase: dx });
-      for (const [dx, y] of [[165, 250], [340, 110], [445, 340], [625, 230]]) coins.push({ x: offset + dx, y, taken: false, phase: dx * 0.04 });
-      checkpoints.push({ x: offset + 100, y: 220, active: false }, { x: offset + 410, y: 220, active: false });
-      gates.push({ x: offset + 690, y: 220, open: false, region: r });
-      bosses.push({ x: offset + 550, y: 220, homeX: offset + 550, yHome: 220, hp: 4, maxHp: 4, alive: true, region: r, hitCd: 0 });
-    }
+    const enemyOffsets = [[[-78, -42], [72, 58], [18, 105]], [[-70, -45], [82, 45], [34, 96]], [[-80, -38], [65, 50], [22, -95]], [[-85, 38], [70, -50], [18, 104]], [[-70, -45], [78, 42], [22, 105]]];
+    const coinOffsets = [[[-105, 25], [85, -75], [115, 82]], [[-110, 30], [96, -72], [85, 95]], [[-105, 25], [92, -85], [112, 80]], [[-115, -75], [105, 35], [30, 125]], [[-105, 25], [100, -78], [110, 78]]];
+    REGIONS.forEach((region, r) => {
+      for (const [dx, dy] of enemyOffsets[r]) enemies.push({ x: region.x + dx, y: region.y + dy, homeX: region.x + dx, homeY: region.y + dy, hp: 2, alive: true, phase: r * 13 + dx });
+      for (const [dx, dy] of coinOffsets[r]) coins.push({ x: region.x + dx, y: region.y + dy, taken: false, phase: (r * 3 + dx) * 0.04 });
+      const camp = r === 0 ? start : { x: region.x - 85, y: region.y + 55 };
+      checkpoints.push({ ...camp, active: r === 0 });
+      const bossX = region.x, bossY = region.y;
+      bosses.push({ x: bossX, y: bossY, homeX: bossX, homeY: bossY, hp: 4, maxHp: 4, alive: true, region: r, hitCd: 0 });
+      gates.push({ x: region.x + 82, y: region.y + 58, open: false, region: r });
+    });
     createWorldObjects();
     updateHUD();
     updateQuest();
@@ -452,7 +515,7 @@ import * as THREE from 'three';
   function placeHero() {
     const p = worldAt(hero.x, hero.y);
     const hurtBob = hero.invuln > 0 ? 0.025 * Math.sin(elapsed * 28) : 0;
-    hero.model.root.position.set(p.x, hero.jumpHeight + hurtBob, p.z);
+    hero.model.root.position.set(p.x, p.y + hero.jumpHeight + hurtBob, p.z);
   }
 
   function updateHUD() {
@@ -461,9 +524,9 @@ import * as THREE from 'three';
     ui.keyCount.textContent = `${keysFound}/5 keys`;
   }
   function updateQuest() {
-    const region = regionAt(hero.x), boss = bosses[region];
+    const region = regionAt(hero.x, hero.y), boss = bosses[region];
     ui.questName.textContent = REGIONS[region].name.toUpperCase();
-    ui.questText.textContent = boss?.alive ? `Defeat ${REGIONS[region].boss} and claim the key` : (region === REGIONS.length - 1 ? 'Reach the portal home' : 'Key claimed · continue to the next nation');
+    ui.questText.textContent = boss?.alive ? `Defeat ${REGIONS[region].boss} and claim the key` : (region === REGIONS.length - 1 ? 'Reach the portal home' : 'Key claimed · explore the connected lands');
   }
   function showToast(message) {
     ui.toast.textContent = message;
@@ -625,6 +688,7 @@ import * as THREE from 'three';
       const reach = radius + obstacle.r;
       if (dx * dx + dy * dy < reach * reach) return true;
     }
+    if (inRiver(x, y)) return true;
     for (const gate of gates) {
       if (!gate.open && Math.abs(x - gate.x) < radius + 16 && Math.abs(y - gate.y) < 72) return true;
     }
@@ -796,7 +860,7 @@ import * as THREE from 'three';
       }
       return;
     }
-    const region = regionAt(hero.x), boss = bosses[region];
+    const region = regionAt(hero.x, hero.y), boss = bosses[region];
     if (boss?.alive && strike(boss, 82) && boss.hitCd <= 0) {
       boss.hp--; boss.hitCd = 0.42; hero.attackHit = true;
       boss.healthMesh.scale.x = 1.29 * (boss.hp / boss.maxHp);
@@ -861,7 +925,7 @@ import * as THREE from 'three';
 
     for (const coin of coins) {
       if (coin.taken) continue;
-      coin.group.position.y = 0.93 + Math.sin(elapsed * 3.2 + coin.phase) * 0.11;
+      coin.group.position.y = terrainAt(coin.x, coin.y, 0.95 + Math.sin(elapsed * 3.2 + coin.phase) * 0.11);
       coin.group.rotation.y = elapsed * 1.7;
       if (Math.hypot(hero.x - coin.x, hero.y - coin.y) < 28) {
         coin.taken = true; coin.group.visible = false; burst(coin.x, coin.y, 0xffd36f, 10); updateHUD(); showToast('A little treasure for the road');
@@ -882,13 +946,13 @@ import * as THREE from 'three';
       if (distance < 175) { enemy.vx = (enemy.vx || 0) + (dx / distance * 48 - (enemy.vx || 0)) * Math.min(1, dt * 3); enemy.vy = (enemy.vy || 0) + (dy / distance * 48 - (enemy.vy || 0)) * Math.min(1, dt * 3); }
       else { enemy.vx = (enemy.homeX + Math.sin(elapsed * 0.6 + enemy.phase) * 24 - enemy.x) * 0.8; enemy.vy = (enemy.homeY + Math.cos(elapsed * 0.5 + enemy.phase) * 20 - enemy.y) * 0.8; }
       moveWithCollision(enemy, enemy.vx * dt, enemy.vy * dt, 14);
-      const p = worldAt(enemy.x, enemy.y); enemy.model.root.position.set(p.x, Math.abs(Math.sin(elapsed * 6 + enemy.phase)) * 0.09, p.z);
+      const p = worldAt(enemy.x, enemy.y); enemy.model.root.position.set(p.x, p.y + Math.abs(Math.sin(elapsed * 6 + enemy.phase)) * 0.09, p.z);
       enemy.model.root.scale.y = 0.94 + Math.abs(Math.sin(elapsed * 6 + enemy.phase)) * 0.12;
       dx = hero.x - enemy.x; dy = hero.y - enemy.y; distance = Math.hypot(dx, dy);
       if (hero.attack > 0 && distance < 62) attackTargets();
       else if (distance < 29 && hero.invuln <= 0) { hero._hitX = enemy.x; hero._hitY = enemy.y; hurt(); }
     }
-    const region = regionAt(hero.x), boss = bosses[region], gate = gates[region];
+    const region = regionAt(hero.x, hero.y), boss = bosses[region], gate = gates[region];
     if (boss?.alive) {
       boss.hitCd = Math.max(0, boss.hitCd - dt);
       const dx = hero.x - boss.x, dy = hero.y - boss.y, distance = Math.hypot(dx, dy) || 1;
@@ -897,23 +961,24 @@ import * as THREE from 'three';
         boss.x = Math.max(boss.homeX - 48, Math.min(boss.homeX + 48, boss.x));
         boss.y = Math.max(35, Math.min(MAP_H - 35, boss.y));
       }
-      const p = worldAt(boss.x, boss.y); boss.model.root.position.set(p.x, Math.abs(Math.sin(elapsed * 3.3)) * 0.1, p.z);
+      const p = worldAt(boss.x, boss.y); boss.model.root.position.set(p.x, p.y + Math.abs(Math.sin(elapsed * 3.3)) * 0.1, p.z);
       boss.model.root.rotation.y = Math.atan2((hero.x - boss.x) * rightAxis.x + (hero.y - boss.y) * depthAxis.x, (hero.x - boss.x) * rightAxis.z + (hero.y - boss.y) * depthAxis.z);
       if (hero.attack > 0 && distance < 82 && boss.hitCd <= 0) attackTargets();
       else if (distance < 43 && hero.invuln <= 0) { hero._hitX = boss.x; hero._hitY = boss.y; hurt(); }
     } else if (gate) gate.open = true;
 
     updateParticles(dt);
-    const target = worldAt(hero.x, hero.y, 0.25);
+    const target = worldAt(hero.x, hero.y, terrainAt(hero.x, hero.y, 0.25));
     const follow = 1 - Math.exp(-dt * 4.2);
     const cameraOffset = depthAxis.clone().multiplyScalar(23.5 * Math.cos(35 * Math.PI / 180));
     const lookTarget = target.clone().add(v3(0, 0.45, 0));
     camera.position.lerp(lookTarget.clone().add(cameraOffset).add(v3(0, 23.5 * Math.sin(35 * Math.PI / 180), 0)), follow);
     camera.lookAt(lookTarget);
-    const biome = REGIONS[regionAt(hero.x)];
+    const biome = REGIONS[regionAt(hero.x, hero.y)];
     scene.background.setHex(biome.sky); scene.fog.color.setHex(biome.sky);
     updateQuest();
-    if (keysFound === REGIONS.length && hero.x > gates[4].x + 20) {
+    const homeGate = gates[REGIONS.length - 1];
+    if (keysFound === REGIONS.length && Math.hypot(hero.x - homeGate.x, hero.y - homeGate.y) < 44) {
       screen = 'win'; ui.eyebrow.textContent = 'THE PROPHECY FULFILLED'; ui.title.textContent = 'The Way Home';
       ui.message.textContent = 'The fifth key turns in the ancient portal. Its light opens onto the familiar forest where your journey began. You have saved five nations—and found your way home.';
       ui.start.textContent = 'PLAY AGAIN'; ui.hint.textContent = 'Five nations · Five guardians · Five keys'; ui.overlay.classList.remove('hidden');
@@ -929,7 +994,7 @@ import * as THREE from 'three';
   }
   reset();
   // Place the opening scene with its orthographic camera already framed around the hero.
-  const initialTarget = worldAt(hero.x, hero.y, 0.25);
+  const initialTarget = worldAt(hero.x, hero.y, terrainAt(hero.x, hero.y, 0.25));
   camera.position.copy(initialTarget).add(depthAxis.clone().multiplyScalar(23.5 * Math.cos(35 * Math.PI / 180))).add(v3(0, 23.5 * Math.sin(35 * Math.PI / 180), 0));
   camera.lookAt(initialTarget);
   requestAnimationFrame(render);
