@@ -89,6 +89,23 @@ import * as THREE from 'three';
     box: new THREE.BoxGeometry(1, 1, 1),
   };
   const colliders = [];
+  const windClock = { value: 0 };
+  let waterGlints = null;
+  let ambientPointObject = null;
+  const ambientPoints = [];
+  const ambientPositions = new Float32Array(36 * 3);
+  const ambientColors = new Float32Array(36 * 3);
+  function windMaterial(color, amplitude, pivot) {
+    const material = mat(color);
+    material.onBeforeCompile = (shader) => {
+      shader.uniforms.uWindTime = windClock;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform float uWindTime;')
+        .replace('#include <begin_vertex>', `#include <begin_vertex>\nfloat windPhase = uWindTime * 0.62 + instanceMatrix[3].x * 0.17 + instanceMatrix[3].z * 0.19;\nfloat windHeight = max(0.0, position.y + ${pivot.toFixed(3)});\ntransformed.x += sin(windPhase) * windHeight * ${amplitude.toFixed(3)};\ntransformed.z += cos(windPhase * 0.73) * windHeight * ${(amplitude * 0.38).toFixed(3)};`);
+    };
+    material.customProgramCacheKey = () => `wind-${amplitude}-${pivot}`;
+    return material;
+  }
   const worldGroup = new THREE.Group();
   const objectGroup = new THREE.Group();
   const actorGroup = new THREE.Group();
@@ -195,6 +212,7 @@ import * as THREE from 'three';
     buildTreesAndRocks();
     buildGroundCover();
     buildDecorativeLights();
+    buildAmbientEffects();
   }
 
   function createGroundTexture() {
@@ -257,6 +275,21 @@ import * as THREE from 'three';
     for (let y = 0; y <= MAP_H; y += 14) line.push([riverX(y), y]);
     buildRibbon([line], 112, new THREE.MeshStandardMaterial({ color: 0x397d91, roughness: 0.3, metalness: 0.08, transparent: true, opacity: 0.9, side: THREE.DoubleSide }), 14);
     buildRibbon([line], 42, new THREE.MeshStandardMaterial({ color: 0x8bc2c0, roughness: 0.24, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }), 20, 0.035);
+    const glintCount = 36;
+    const glintGeometry = new THREE.BufferGeometry();
+    glintGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(glintCount * 2 * 3), 3));
+    const glintSeeds = Array.from({ length: glintCount }, (_, i) => ({
+      y: random01(i + 5101) * MAP_H,
+      across: (random01(i + 5127) - 0.5) * 78,
+      length: 10 + random01(i + 5153) * 20,
+      speed: 22 + random01(i + 5179) * 28,
+      phase: random01(i + 5201) * Math.PI * 2,
+    }));
+    const glintMaterial = new THREE.LineBasicMaterial({ color: 0xd5f1e8, transparent: true, opacity: 0.34, depthWrite: false });
+    waterGlints = { geometry: glintGeometry, seeds: glintSeeds };
+    const glintLines = new THREE.LineSegments(glintGeometry, glintMaterial);
+    glintLines.frustumCulled = false;
+    worldGroup.add(glintLines);
     const bank = new THREE.MeshStandardMaterial({ color: 0xa59a72, roughness: 1, side: THREE.DoubleSide });
     for (const crossing of BRIDGE_CROSSINGS) {
       const group = new THREE.Group(), p = worldAt(riverX(crossing), crossing, terrainHeight(riverX(crossing), crossing) + 0.16);
@@ -275,6 +308,7 @@ import * as THREE from 'three';
       addMesh(hut, new THREE.BoxGeometry(1.35, 0.95, 1.15), wallMaterial, v3(0, 0.48, 0), { castShadow: true });
       addMesh(hut, new THREE.ConeGeometry(1.0, 0.72, 4), roofMaterial, v3(0, 1.25, 0), { rotation: [0, Math.PI / 4, 0] });
       hut.scale.setScalar(scale); hut.position.set(p.x, p.y, p.z); village.add(hut);
+      colliders.push({ x, y, r: 23 * scale });
     }
     worldGroup.add(village);
     const shrine = (x, y, color, size = 1) => {
@@ -295,8 +329,8 @@ import * as THREE from 'three';
 
   function buildGroundCover() {
     const grassCount = 1800, flowerCount = 300;
-    const grass = new THREE.InstancedMesh(new THREE.ConeGeometry(0.075, 0.42, 4), mat(0xffffff), grassCount);
-    const flowers = new THREE.InstancedMesh(new THREE.SphereGeometry(0.09, 6, 5), mat(0xffffff, 0.72), flowerCount);
+    const grass = new THREE.InstancedMesh(new THREE.ConeGeometry(0.075, 0.42, 4), windMaterial(0xffffff, 0.18, 0.21), grassCount);
+    const flowers = new THREE.InstancedMesh(new THREE.SphereGeometry(0.09, 6, 5), windMaterial(0xffffff, 0.14, 0.09), flowerCount);
     const shrubs = new THREE.InstancedMesh(shared.sphere, mat(0xffffff), 520);
     const placeCover = (mesh, i, seed, scaleRange, palette, yOffset = 0.025) => {
       const region = i % REGIONS.length;
@@ -335,8 +369,8 @@ import * as THREE from 'three';
     for (let regionIndex = 0; regionIndex < REGIONS.length; regionIndex++) {
       const biome = REGIONS[regionIndex];
       const trunks = new THREE.InstancedMesh(shared.trunk, mat(0xffffff), treeCount);
-      const coniferLayers = [0, 1, 2].map(() => new THREE.InstancedMesh(shared.foliage, mat(0xffffff), treeCount));
-      const canopyLayers = [0, 1, 2].map(() => new THREE.InstancedMesh(shared.sphere, mat(0xffffff), treeCount));
+      const coniferLayers = [0, 1, 2].map(() => new THREE.InstancedMesh(shared.foliage, windMaterial(0xffffff, 0.028, 0.63), treeCount));
+      const canopyLayers = [0, 1, 2].map(() => new THREE.InstancedMesh(shared.sphere, windMaterial(0xffffff, 0.022, 0.95), treeCount));
       let conifers = 0, broadleaf = 0;
       for (let i = 0; i < treeCount; i++) {
         const seed = regionIndex * 1009 + i * 37;
@@ -346,7 +380,9 @@ import * as THREE from 'three';
           y = biome.y + (random01(seed + attempt * 13 + 21) - 0.5) * 500;
           valid = x > 28 && x < WORLD - 28 && y > 28 && y < MAP_H - 28
             && regionAt(x, y) === regionIndex && distanceToPath(x, y) > 44
-            && distanceToRiver(x, y) > 96 && Math.hypot(x - 800, y - 600) > 132;
+            && distanceToRiver(x, y) > 96 && Math.hypot(x - 800, y - 600) > 132
+            && Math.hypot(x - 225, y - 300) > 42
+            && colliders.every((obstacle) => Math.hypot(x - obstacle.x, y - obstacle.y) > obstacle.r + 34);
           if (valid) break;
         }
         if (!valid) continue;
@@ -378,7 +414,8 @@ import * as THREE from 'three';
           }
           conifers++;
         }
-        colliders.push({ x, y, r: 20 * scale });
+        // Only the trunk blocks the player; the wide canopy remains walk-through.
+        colliders.push({ x, y, r: 7.5 * scale });
       }
       trunks.instanceMatrix.needsUpdate = true;
       if (trunks.instanceColor) trunks.instanceColor.needsUpdate = true;
@@ -398,6 +435,8 @@ import * as THREE from 'three';
     let placed = 0;
     for (let i = 0; i < rockCount; i++) {
       const region = i % REGIONS.length, biome = REGIONS[region], seed = i * 29 + 509;
+      const sx = 0.52 + random01(seed + 3) * 0.9, sy = 0.34 + random01(seed + 4) * 0.55, sz = 0.5 + random01(seed + 5) * 0.78;
+      const rockRadius = 0.55 * Math.max(sx, sz) * SCALE + 1;
       let x = biome.x, y = biome.y, valid = false;
       for (let attempt = 0; attempt < 24; attempt++) {
         x = biome.x + (random01(seed + attempt * 5 + 91) - 0.5) * 600;
@@ -405,17 +444,18 @@ import * as THREE from 'three';
         valid = x > 18 && x < WORLD - 18 && y > 18 && y < MAP_H - 18
           && distanceToPath(x, y) > 36 && distanceToRiver(x, y) > 76
           && Math.hypot(x - 800, y - 600) > 118
-          && colliders.every((obstacle) => Math.hypot(x - obstacle.x, y - obstacle.y) > obstacle.r + 18);
+          && Math.hypot(x - 225, y - 300) > 42
+          && colliders.every((obstacle) => Math.hypot(x - obstacle.x, y - obstacle.y) > obstacle.r + rockRadius + 8);
         if (valid) break;
       }
       if (!valid) continue;
-      const sx = 0.52 + random01(seed + 3) * 0.9, sy = 0.34 + random01(seed + 4) * 0.55, sz = 0.5 + random01(seed + 5) * 0.78;
       const p = worldAt(x, y, terrainAt(x, y, sy * 0.28));
       temp.position.copy(p); temp.rotation.set(random01(seed + 6) * 0.6, random01(seed + 7) * Math.PI, random01(seed + 8) * 0.6);
       temp.scale.set(sx, sy, sz); temp.updateMatrix();
       rocks.setMatrixAt(placed, temp.matrix);
       rocks.setColorAt(placed, new THREE.Color([0x68706a, 0x817c70, 0x777e78, 0x625e60][i % 4]).multiplyScalar(0.82 + random01(seed + 9) * 0.32));
-      colliders.push({ x, y, r: 16 + Math.max(sx, sz) * 4 });
+      // Match the dodecahedron's footprint rather than using one oversized radius.
+      colliders.push({ x, y, r: 0.55 * Math.max(sx, sz) * SCALE + 1 });
       placed++;
     }
     rocks.count = placed; rocks.instanceMatrix.needsUpdate = true;
@@ -434,6 +474,28 @@ import * as THREE from 'three';
       temp.updateMatrix(); lights.setMatrixAt(i, temp.matrix);
     }
     worldGroup.add(lights);
+  }
+
+  function buildAmbientEffects() {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(ambientPositions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(ambientColors, 3));
+    const material = new THREE.PointsMaterial({ size: 0.13, vertexColors: true, transparent: true, opacity: 0.56, depthWrite: false, sizeAttenuation: true });
+    ambientPointObject = new THREE.Points(geometry, material);
+    ambientPointObject.frustumCulled = false;
+    scene.add(ambientPointObject);
+    for (let i = 0; i < 36; i++) {
+      const firefly = i < 12;
+      const particle = {
+        x: 225 + (random01(i + 5301) - 0.5) * 650,
+        y: 300 + (random01(i + 5327) - 0.5) * 520,
+        phase: random01(i + 5353) * Math.PI * 2,
+        firefly,
+        altitude: firefly ? 0.55 + random01(i + 5379) * 1.25 : 0.25 + random01(i + 5401) * 0.9,
+        color: new THREE.Color(firefly ? 0xe7ee9b : 0xb4bbb5),
+      };
+      ambientPoints.push(particle);
+    }
   }
 
   buildEnvironment();
@@ -728,6 +790,56 @@ import * as THREE from 'three';
   particleSystem.frustumCulled = false;
   scene.add(particleSystem);
 
+  function updateEnvironmentMotion(dt) {
+    windClock.value += dt;
+    hemi.intensity = 2 + Math.sin(windClock.value * 0.12) * 0.025;
+    sun.intensity = 3.2 + Math.sin(windClock.value * 0.12 + 0.8) * 0.035;
+
+    if (waterGlints) {
+      const positions = waterGlints.geometry.attributes.position.array;
+      waterGlints.seeds.forEach((glint, i) => {
+        const y = (glint.y + windClock.value * glint.speed) % MAP_H;
+        const centerX = riverX(y) + glint.across + Math.sin(windClock.value * 0.7 + glint.phase) * 4;
+        const halfLength = glint.length * 0.5;
+        for (let end = 0; end < 2; end++) {
+          const along = end === 0 ? -halfLength : halfLength;
+          const x = centerX + riverX(y + along) - riverX(y);
+          const flowY = (y + along + MAP_H) % MAP_H;
+          const p = worldAt(x, flowY, terrainHeight(x, flowY) + 0.075);
+          const offset = (i * 2 + end) * 3;
+          positions[offset] = p.x; positions[offset + 1] = p.y; positions[offset + 2] = p.z;
+        }
+      });
+      waterGlints.geometry.attributes.position.needsUpdate = true;
+    }
+
+    for (let i = 0; i < ambientPoints.length; i++) {
+      const particle = ambientPoints[i];
+      const spanX = 920, spanY = 720;
+      particle.x += (particle.firefly ? 0.7 : 2.2) * dt;
+      particle.y += Math.sin(windClock.value * 0.34 + particle.phase) * (particle.firefly ? 2.6 : 1.5) * dt;
+      if (particle.x < hero.x - spanX / 2) particle.x += spanX;
+      if (particle.x > hero.x + spanX / 2) particle.x -= spanX;
+      if (particle.y < hero.y - spanY / 2) particle.y += spanY;
+      if (particle.y > hero.y + spanY / 2) particle.y -= spanY;
+      particle.x = THREE.MathUtils.clamp(particle.x, 8, WORLD - 8);
+      particle.y = THREE.MathUtils.clamp(particle.y, 8, MAP_H - 8);
+      const bob = Math.sin(windClock.value * (particle.firefly ? 1.3 : 0.55) + particle.phase);
+      const height = terrainHeight(particle.x, particle.y) + particle.altitude + bob * (particle.firefly ? 0.14 : 0.04);
+      const p = worldAt(particle.x, particle.y, height);
+      const offset = i * 3;
+      ambientPositions[offset] = p.x; ambientPositions[offset + 1] = p.y; ambientPositions[offset + 2] = p.z;
+      const glow = particle.firefly ? 0.32 + (0.5 + 0.5 * Math.sin(windClock.value * 2.1 + particle.phase)) * 0.48 : 0.42;
+      ambientColors[offset] = particle.color.r * glow;
+      ambientColors[offset + 1] = particle.color.g * glow;
+      ambientColors[offset + 2] = particle.color.b * glow;
+    }
+    if (ambientPointObject) {
+      ambientPointObject.geometry.attributes.position.needsUpdate = true;
+      ambientPointObject.geometry.attributes.color.needsUpdate = true;
+    }
+  }
+
   function updateParticles(dt) {
     for (const particle of particles) {
       particle.x += particle.vx * dt;
@@ -754,7 +866,7 @@ import * as THREE from 'three';
   }
 
   function blocked(x, y, radius = 12) {
-    if (y < 14 || y > MAP_H - 14 || x < 5 || x > WORLD - 5) return true;
+    if (y < radius || y > MAP_H - radius || x < radius || x > WORLD - radius) return true;
     for (const obstacle of colliders) {
       const dx = x - obstacle.x, dy = y - obstacle.y;
       const reach = radius + obstacle.r;
@@ -767,16 +879,85 @@ import * as THREE from 'three';
     return false;
   }
 
-  function moveWithCollision(actor, dx, dy, radius = 12) {
-    const oldX = actor.x, oldY = actor.y;
-    if (!blocked(oldX + dx, oldY, radius)) actor.x += dx;
-    else actor.vx = 0;
-    if (!blocked(actor.x, oldY + dy, radius)) actor.y += dy;
-    else actor.vy = 0;
-    if (actor.x === oldX && actor.y === oldY) {
-      actor.vx *= 0.15;
-      actor.vy *= 0.15;
+  function findFreePosition(x, y, radius) {
+    if (!blocked(x, y, radius)) return { x, y };
+    for (let distance = 8; distance <= 144; distance += 8) {
+      for (let sample = 0; sample < 20; sample++) {
+        const angle = sample * Math.PI / 10;
+        const candidate = { x: x + Math.cos(angle) * distance, y: y + Math.sin(angle) * distance };
+        if (!blocked(candidate.x, candidate.y, radius)) return candidate;
+      }
     }
+    return null;
+  }
+
+  function moveWithCollision(actor, dx, dy, radius = 12) {
+    if (blocked(actor.x, actor.y, radius)) {
+      const safe = actor.safeX !== undefined && !blocked(actor.safeX, actor.safeY, radius)
+        ? { x: actor.safeX, y: actor.safeY }
+        : findFreePosition(actor.x, actor.y, radius);
+      if (safe) { actor.x = safe.x; actor.y = safe.y; }
+      actor.vx = 0; actor.vy = 0;
+      if (blocked(actor.x, actor.y, radius)) return;
+    }
+    actor.safeX = actor.x; actor.safeY = actor.y;
+
+    const oldX = actor.x, oldY = actor.y;
+    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / 4));
+    const stepX = dx / steps, stepY = dy / steps;
+    let hitX = false, hitY = false;
+    for (let step = 0; step < steps; step++) {
+      const x = actor.x, y = actor.y;
+      const nextX = x + stepX, nextY = y + stepY;
+      if (!blocked(nextX, nextY, radius)) {
+        actor.x = nextX; actor.y = nextY;
+        actor.safeX = actor.x; actor.safeY = actor.y;
+        continue;
+      }
+
+      // Try both axes independently so a collision on one side never cancels sliding on the other.
+      const axes = Math.abs(stepX) >= Math.abs(stepY) ? ['x', 'y'] : ['y', 'x'];
+      let moved = false;
+      for (const axis of axes) {
+        const candidateX = actor.x + (axis === 'x' ? stepX : 0);
+        const candidateY = actor.y + (axis === 'y' ? stepY : 0);
+        if (!blocked(candidateX, candidateY, radius)) {
+          actor.x = candidateX; actor.y = candidateY;
+          if (axis === 'x') hitY = true; else hitX = true;
+          moved = true;
+        }
+      }
+
+      // At rounded corners, project the remaining motion onto a nearby circle's tangent.
+      if (!moved) {
+        let best = null, bestProgress = 0;
+        for (const obstacle of colliders) {
+          let nx = x - obstacle.x, ny = y - obstacle.y;
+          const distance = Math.hypot(nx, ny) || 1;
+          const reach = radius + obstacle.r;
+          if (distance > reach + 6) continue;
+          nx /= distance; ny /= distance;
+          const intoSurface = stepX * nx + stepY * ny;
+          if (intoSurface >= 0) continue;
+          const tangentX = stepX - nx * intoSurface;
+          const tangentY = stepY - ny * intoSurface;
+          const candidateX = x + tangentX, candidateY = y + tangentY;
+          const progress = tangentX * stepX + tangentY * stepY;
+          if (progress > bestProgress && !blocked(candidateX, candidateY, radius)) {
+            best = { x: candidateX, y: candidateY };
+            bestProgress = progress;
+          }
+        }
+        if (best) { actor.x = best.x; actor.y = best.y; moved = true; }
+      }
+      if (!moved) { hitX = true; hitY = true; }
+      if (!blocked(actor.x, actor.y, radius)) { actor.safeX = actor.x; actor.safeY = actor.y; }
+    }
+
+    if (hitX && actor.vx * dx > 0) actor.vx = 0;
+    if (hitY && actor.vy * dy > 0) actor.vy = 0;
+    if (actor.x === oldX) actor.vx *= 0.15;
+    if (actor.y === oldY) actor.vy *= 0.15;
   }
 
   function hurt() {
@@ -952,6 +1133,7 @@ import * as THREE from 'three';
 
   function update(dt) {
     elapsed += dt;
+    updateEnvironmentMotion(dt);
     if (toastTimer > 0 && (toastTimer -= dt) <= 0) ui.toast.classList.remove('show');
     if (screen !== 'playing') { updateParticles(dt); return; }
     const direction = moveInput();
