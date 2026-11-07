@@ -114,48 +114,29 @@ import * as THREE from 'three';
 
   function buildEnvironment() {
     const floorGeo = new THREE.PlaneGeometry(REGION / SCALE, MAP_H / SCALE);
-    const tileGeo = new THREE.BoxGeometry(2.62, 0.055, 2.62);
     for (let r = 0; r < REGIONS.length; r++) {
       const center = worldAt(r * REGION + REGION / 2, MAP_H / 2, -0.12);
       const floor = addMesh(worldGroup, floorGeo, mat(REGIONS[r].ground), center, { rotation: [-Math.PI / 2, 0, Math.PI / 4], castShadow: false });
       floor.receiveShadow = true;
-      const count = 9 * 6;
-      const tiles = new THREE.InstancedMesh(tileGeo, mat(REGIONS[r].tile), count);
-      let i = 0;
-      for (let tx = 0; tx < 9; tx++) for (let ty = 0; ty < 6; ty++) {
-        const x = r * REGION + (tx + 0.5) * 80;
-        const y = (ty + 0.5) * (MAP_H / 6);
-        temp.position.copy(worldAt(x, y, -0.055 + random01(x + y) * 0.008));
-        temp.rotation.set(0, Math.PI / 4, 0);
-        temp.scale.set(1, 1, 1);
-        temp.updateMatrix();
-        tiles.setMatrixAt(i, temp.matrix);
-        const color = new THREE.Color(random01(x * 7 + y * 3) > 0.83 ? REGIONS[r].accent : REGIONS[r].tile);
-        color.multiplyScalar(0.88 + random01(x + y * 11) * 0.24);
-        tiles.setColorAt(i++, color);
-      }
-      tiles.instanceMatrix.needsUpdate = true;
-      if (tiles.instanceColor) tiles.instanceColor.needsUpdate = true;
-      tiles.castShadow = false;
-      tiles.receiveShadow = true;
-      worldGroup.add(tiles);
-      const path = addMesh(worldGroup, new THREE.PlaneGeometry(REGION / SCALE, 4.7), mat(REGIONS[r].accent, 1), worldAt(r * REGION + REGION / 2, MAP_H / 2, -0.015), { rotation: [-Math.PI / 2, 0, Math.PI / 4], castShadow: false });
-      path.material.transparent = true;
-      path.material.opacity = 0.19;
-      path.material.depthWrite = false;
     }
     buildTreesAndRocks();
     buildDecorativeLights();
   }
 
   function buildTreesAndRocks() {
-    for (let x = 95; x < WORLD; x += 200) {
-      for (const y of [28, MAP_H - 28]) {
+    for (let regionIndex = 0; regionIndex < REGIONS.length; regionIndex++) {
+      for (let i = 0; i < 7; i++) {
+        const seed = regionIndex * 17 + i;
+        const x = regionIndex * REGION + 34 + random01(seed + 20) * (REGION - 68);
+        const edge = random01(seed + 21) < 0.5 ? 0 : 1;
+        const y = edge === 0
+          ? 24 + random01(seed + 22) * (MAP_H / 2 - 96)
+          : MAP_H / 2 + 72 + random01(seed + 22) * (MAP_H / 2 - 96);
         const region = regionAt(x), g = new THREE.Group();
         const p = worldAt(x, y);
         g.position.set(p.x, 0, p.z);
         g.rotation.y = Math.PI / 4;
-        const s = 0.82 + random01(x + y) * 0.48;
+        const s = 0.82 + random01(seed + 23) * 0.48;
         addMesh(g, shared.trunk, mats.bark, v3(0, 0.66 * s, 0), { scale: [s, s, s] });
         const leafMat = region === 1 ? mats.snow : mat(REGIONS[region].leaf);
         for (let layer = 0; layer < 3; layer++) {
@@ -174,14 +155,6 @@ import * as THREE from 'three';
       const rock = addMesh(worldGroup, shared.rock, mat(i % 3 ? 0x68706a : 0x817c70), p, { scale: [0.55 + random01(i) * 0.6, 0.35 + random01(i + 2) * 0.35, 0.48 + random01(i + 3) * 0.5], rotation: [random01(i + 4), random01(i + 5), random01(i + 6)] });
       rock.castShadow = true;
       colliders.push({ x, y, r: 17 });
-    }
-    // Low, irregular stone borders make the traversable area read clearly without enclosing the path.
-    for (let i = 0; i < WORLD / 105; i++) {
-      for (const y of [8, MAP_H - 8]) {
-        const x = 52 + i * 105;
-        const p = worldAt(x, y, 0.16);
-        addMesh(worldGroup, shared.rock, mats.rock, p, { scale: [0.52, 0.3, 0.48], rotation: [0.1, random01(i + y) * 2, 0.2] });
-      }
     }
   }
 
