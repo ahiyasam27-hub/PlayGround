@@ -183,6 +183,111 @@ import * as THREE from 'three';
     return mesh;
   }
 
+  function buildDistantRidges() {
+    const palettes = [0x627365, 0x71818a, 0x756f88];
+    const sides = [
+      (distance) => [-distance, -distance, WORLD + distance, -distance],
+      (distance) => [WORLD + distance, -distance, WORLD + distance, MAP_H + distance],
+      (distance) => [WORLD + distance, MAP_H + distance, -distance, MAP_H + distance],
+      (distance) => [-distance, MAP_H + distance, -distance, -distance],
+    ];
+    for (let layer = 0; layer < 3; layer++) {
+      const distance = 205 + layer * 125;
+      const vertices = [], colors = [], indices = [];
+      let vertex = 0;
+      for (let side = 0; side < sides.length; side++) {
+        const [x0, y0, x1, y1] = sides[side](distance);
+        const length = Math.hypot(x1 - x0, y1 - y0);
+        const steps = Math.ceil(length / 82);
+        const edge = [];
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const x = THREE.MathUtils.lerp(x0, x1, t), y = THREE.MathUtils.lerp(y0, y1, t);
+          const ground = terrainHeight(x, y);
+          const peak = 2.4 + random01(layer * 701 + side * 97 + i * 19) * (layer === 0 ? 3.2 : 4.8);
+          edge.push({ x, y, ground, peak });
+        }
+        for (const point of edge) {
+          for (const h of [point.ground - 0.08, point.ground + point.peak]) {
+            const p = worldAt(point.x, point.y, h);
+            vertices.push(p.x, p.y, p.z);
+            const shade = h === point.ground - 0.08 ? 0.72 : 0.88 + random01(vertex + layer * 43) * 0.18;
+            const tint = new THREE.Color(palettes[layer]).multiplyScalar(shade);
+            colors.push(tint.r, tint.g, tint.b);
+            vertex++;
+          }
+        }
+        const start = vertex / 2 - edge.length;
+        for (let i = 0; i < edge.length - 1; i++) {
+          const a = (start + i) * 2;
+          indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+        }
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      const ridge = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, side: THREE.DoubleSide, fog: true }));
+      ridge.castShadow = false;
+      ridge.receiveShadow = false;
+      worldGroup.add(ridge);
+    }
+  }
+
+  function buildBiomeDetails() {
+    const decor = [
+      { count: 24, primary: new THREE.ConeGeometry(0.14, 0.24, 6), primaryColor: 0x9b7052, secondary: new THREE.SphereGeometry(0.15, 7, 5), secondaryColor: 0xc98a70, size: [0.7, 1.25] },
+      { count: 30, primary: new THREE.ConeGeometry(0.2, 0.9, 5), primaryColor: 0xa9c8ce, secondary: new THREE.ConeGeometry(0.12, 0.62, 5), secondaryColor: 0xd7e9e7, size: [0.65, 1.25] },
+      { count: 34, primary: new THREE.CylinderGeometry(0.035, 0.085, 0.76, 5), primaryColor: 0x729782, secondary: new THREE.SphereGeometry(0.075, 6, 5), secondaryColor: 0xc2b27a, size: [0.7, 1.35] },
+      { count: 28, primary: new THREE.DodecahedronGeometry(0.42, 0), primaryColor: 0x554d49, secondary: new THREE.ConeGeometry(0.2, 0.75, 5), secondaryColor: 0xa36545, size: [0.55, 1.15] },
+      { count: 30, primary: new THREE.OctahedronGeometry(0.35, 0), primaryColor: 0x9086b7, secondary: new THREE.ConeGeometry(0.16, 0.68, 5), secondaryColor: 0xc6bce0, size: [0.65, 1.25] },
+    ];
+    for (let region = 0; region < decor.length; region++) {
+      const biome = REGIONS[region], spec = decor[region];
+      const primary = new THREE.InstancedMesh(spec.primary, mat(0xffffff), spec.count);
+      const secondary = new THREE.InstancedMesh(spec.secondary, mat(0xffffff), spec.count);
+      let placed = 0;
+      for (let i = 0; i < spec.count; i++) {
+        const seed = region * 10007 + i * 61 + 883;
+        let x = biome.x, y = biome.y, valid = false;
+        for (let attempt = 0; attempt < 28; attempt++) {
+          x = biome.x + (random01(seed + attempt * 7 + 11) - 0.5) * 540;
+          y = biome.y + (random01(seed + attempt * 7 + 17) - 0.5) * 440;
+          valid = x > 18 && x < WORLD - 18 && y > 18 && y < MAP_H - 18
+            && regionAt(x, y) === region && distanceToPath(x, y) > 34
+            && distanceToRiver(x, y) > 84 && Math.hypot(x - 800, y - 600) > 130
+            && colliders.every((obstacle) => Math.hypot(x - obstacle.x, y - obstacle.y) > obstacle.r + 10);
+          if (valid) break;
+        }
+        if (!valid) continue;
+        const scale = spec.size[0] + random01(seed + 23) * (spec.size[1] - spec.size[0]);
+        const p = worldAt(x, y, terrainAt(x, y, 0.02));
+        temp.position.copy(p);
+        temp.rotation.set(0, random01(seed + 29) * Math.PI * 2, (random01(seed + 31) - 0.5) * 0.12);
+        temp.scale.set(scale, scale, scale);
+        temp.updateMatrix();
+        primary.setMatrixAt(placed, temp.matrix);
+        primary.setColorAt(placed, new THREE.Color(spec.primaryColor).offsetHSL((random01(seed + 37) - 0.5) * 0.035, 0, (random01(seed + 41) - 0.5) * 0.12));
+        temp.position.set(p.x + (random01(seed + 43) - 0.5) * 0.34, p.y, p.z + (random01(seed + 47) - 0.5) * 0.34);
+        temp.rotation.y += 0.8;
+        temp.scale.set(scale * 0.68, scale * (0.65 + random01(seed + 53) * 0.35), scale * 0.68);
+        temp.updateMatrix();
+        secondary.setMatrixAt(placed, temp.matrix);
+        secondary.setColorAt(placed, new THREE.Color(spec.secondaryColor).offsetHSL((random01(seed + 59) - 0.5) * 0.035, 0, (random01(seed + 61) - 0.5) * 0.12));
+        placed++;
+      }
+      primary.count = secondary.count = placed;
+      for (const mesh of [primary, secondary]) {
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        mesh.castShadow = false;
+        mesh.receiveShadow = true;
+        worldGroup.add(mesh);
+      }
+    }
+  }
+
   function buildEnvironment() {
     const margin = 420, terrainWidth = WORLD + margin * 2, terrainDepth = MAP_H + margin * 2;
     const cols = 108, rows = 90;
@@ -206,11 +311,13 @@ import * as THREE from 'three';
     groundGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     groundGeo.setIndex(indices); groundGeo.computeVertexNormals();
     worldGroup.add(new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ map: createGroundTexture(), vertexColors: true, roughness: 1, side: THREE.DoubleSide })));
+    buildDistantRidges();
     buildTrail();
     buildRiver();
     buildLandmarks();
     buildTreesAndRocks();
     buildGroundCover();
+    buildBiomeDetails();
     buildDecorativeLights();
     buildAmbientEffects();
   }
