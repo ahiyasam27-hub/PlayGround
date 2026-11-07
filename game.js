@@ -275,6 +275,7 @@ import * as THREE from 'three';
       addMesh(hut, new THREE.BoxGeometry(1.35, 0.95, 1.15), wallMaterial, v3(0, 0.48, 0), { castShadow: true });
       addMesh(hut, new THREE.ConeGeometry(1.0, 0.72, 4), roofMaterial, v3(0, 1.25, 0), { rotation: [0, Math.PI / 4, 0] });
       hut.scale.setScalar(scale); hut.position.set(p.x, p.y, p.z); village.add(hut);
+      colliders.push({ x, y, r: 23 * scale });
     }
     worldGroup.add(village);
     const shrine = (x, y, color, size = 1) => {
@@ -346,7 +347,9 @@ import * as THREE from 'three';
           y = biome.y + (random01(seed + attempt * 13 + 21) - 0.5) * 500;
           valid = x > 28 && x < WORLD - 28 && y > 28 && y < MAP_H - 28
             && regionAt(x, y) === regionIndex && distanceToPath(x, y) > 44
-            && distanceToRiver(x, y) > 96 && Math.hypot(x - 800, y - 600) > 132;
+            && distanceToRiver(x, y) > 96 && Math.hypot(x - 800, y - 600) > 132
+            && Math.hypot(x - 225, y - 300) > 42
+            && colliders.every((obstacle) => Math.hypot(x - obstacle.x, y - obstacle.y) > obstacle.r + 34);
           if (valid) break;
         }
         if (!valid) continue;
@@ -378,7 +381,8 @@ import * as THREE from 'three';
           }
           conifers++;
         }
-        colliders.push({ x, y, r: 20 * scale });
+        // Only the trunk blocks the player; the wide canopy remains walk-through.
+        colliders.push({ x, y, r: 7.5 * scale });
       }
       trunks.instanceMatrix.needsUpdate = true;
       if (trunks.instanceColor) trunks.instanceColor.needsUpdate = true;
@@ -398,6 +402,8 @@ import * as THREE from 'three';
     let placed = 0;
     for (let i = 0; i < rockCount; i++) {
       const region = i % REGIONS.length, biome = REGIONS[region], seed = i * 29 + 509;
+      const sx = 0.52 + random01(seed + 3) * 0.9, sy = 0.34 + random01(seed + 4) * 0.55, sz = 0.5 + random01(seed + 5) * 0.78;
+      const rockRadius = 0.55 * Math.max(sx, sz) * SCALE + 1;
       let x = biome.x, y = biome.y, valid = false;
       for (let attempt = 0; attempt < 24; attempt++) {
         x = biome.x + (random01(seed + attempt * 5 + 91) - 0.5) * 600;
@@ -405,17 +411,18 @@ import * as THREE from 'three';
         valid = x > 18 && x < WORLD - 18 && y > 18 && y < MAP_H - 18
           && distanceToPath(x, y) > 36 && distanceToRiver(x, y) > 76
           && Math.hypot(x - 800, y - 600) > 118
-          && colliders.every((obstacle) => Math.hypot(x - obstacle.x, y - obstacle.y) > obstacle.r + 18);
+          && Math.hypot(x - 225, y - 300) > 42
+          && colliders.every((obstacle) => Math.hypot(x - obstacle.x, y - obstacle.y) > obstacle.r + rockRadius + 8);
         if (valid) break;
       }
       if (!valid) continue;
-      const sx = 0.52 + random01(seed + 3) * 0.9, sy = 0.34 + random01(seed + 4) * 0.55, sz = 0.5 + random01(seed + 5) * 0.78;
       const p = worldAt(x, y, terrainAt(x, y, sy * 0.28));
       temp.position.copy(p); temp.rotation.set(random01(seed + 6) * 0.6, random01(seed + 7) * Math.PI, random01(seed + 8) * 0.6);
       temp.scale.set(sx, sy, sz); temp.updateMatrix();
       rocks.setMatrixAt(placed, temp.matrix);
       rocks.setColorAt(placed, new THREE.Color([0x68706a, 0x817c70, 0x777e78, 0x625e60][i % 4]).multiplyScalar(0.82 + random01(seed + 9) * 0.32));
-      colliders.push({ x, y, r: 16 + Math.max(sx, sz) * 4 });
+      // Match the dodecahedron's footprint rather than using one oversized radius.
+      colliders.push({ x, y, r: 0.55 * Math.max(sx, sz) * SCALE + 1 });
       placed++;
     }
     rocks.count = placed; rocks.instanceMatrix.needsUpdate = true;
@@ -754,7 +761,7 @@ import * as THREE from 'three';
   }
 
   function blocked(x, y, radius = 12) {
-    if (y < 14 || y > MAP_H - 14 || x < 5 || x > WORLD - 5) return true;
+    if (y < radius || y > MAP_H - radius || x < radius || x > WORLD - radius) return true;
     for (const obstacle of colliders) {
       const dx = x - obstacle.x, dy = y - obstacle.y;
       const reach = radius + obstacle.r;
@@ -767,16 +774,85 @@ import * as THREE from 'three';
     return false;
   }
 
-  function moveWithCollision(actor, dx, dy, radius = 12) {
-    const oldX = actor.x, oldY = actor.y;
-    if (!blocked(oldX + dx, oldY, radius)) actor.x += dx;
-    else actor.vx = 0;
-    if (!blocked(actor.x, oldY + dy, radius)) actor.y += dy;
-    else actor.vy = 0;
-    if (actor.x === oldX && actor.y === oldY) {
-      actor.vx *= 0.15;
-      actor.vy *= 0.15;
+  function findFreePosition(x, y, radius) {
+    if (!blocked(x, y, radius)) return { x, y };
+    for (let distance = 8; distance <= 144; distance += 8) {
+      for (let sample = 0; sample < 20; sample++) {
+        const angle = sample * Math.PI / 10;
+        const candidate = { x: x + Math.cos(angle) * distance, y: y + Math.sin(angle) * distance };
+        if (!blocked(candidate.x, candidate.y, radius)) return candidate;
+      }
     }
+    return null;
+  }
+
+  function moveWithCollision(actor, dx, dy, radius = 12) {
+    if (blocked(actor.x, actor.y, radius)) {
+      const safe = actor.safeX !== undefined && !blocked(actor.safeX, actor.safeY, radius)
+        ? { x: actor.safeX, y: actor.safeY }
+        : findFreePosition(actor.x, actor.y, radius);
+      if (safe) { actor.x = safe.x; actor.y = safe.y; }
+      actor.vx = 0; actor.vy = 0;
+      if (blocked(actor.x, actor.y, radius)) return;
+    }
+    actor.safeX = actor.x; actor.safeY = actor.y;
+
+    const oldX = actor.x, oldY = actor.y;
+    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / 4));
+    const stepX = dx / steps, stepY = dy / steps;
+    let hitX = false, hitY = false;
+    for (let step = 0; step < steps; step++) {
+      const x = actor.x, y = actor.y;
+      const nextX = x + stepX, nextY = y + stepY;
+      if (!blocked(nextX, nextY, radius)) {
+        actor.x = nextX; actor.y = nextY;
+        actor.safeX = actor.x; actor.safeY = actor.y;
+        continue;
+      }
+
+      // Try both axes independently so a collision on one side never cancels sliding on the other.
+      const axes = Math.abs(stepX) >= Math.abs(stepY) ? ['x', 'y'] : ['y', 'x'];
+      let moved = false;
+      for (const axis of axes) {
+        const candidateX = actor.x + (axis === 'x' ? stepX : 0);
+        const candidateY = actor.y + (axis === 'y' ? stepY : 0);
+        if (!blocked(candidateX, candidateY, radius)) {
+          actor.x = candidateX; actor.y = candidateY;
+          if (axis === 'x') hitY = true; else hitX = true;
+          moved = true;
+        }
+      }
+
+      // At rounded corners, project the remaining motion onto a nearby circle's tangent.
+      if (!moved) {
+        let best = null, bestProgress = 0;
+        for (const obstacle of colliders) {
+          let nx = x - obstacle.x, ny = y - obstacle.y;
+          const distance = Math.hypot(nx, ny) || 1;
+          const reach = radius + obstacle.r;
+          if (distance > reach + 6) continue;
+          nx /= distance; ny /= distance;
+          const intoSurface = stepX * nx + stepY * ny;
+          if (intoSurface >= 0) continue;
+          const tangentX = stepX - nx * intoSurface;
+          const tangentY = stepY - ny * intoSurface;
+          const candidateX = x + tangentX, candidateY = y + tangentY;
+          const progress = tangentX * stepX + tangentY * stepY;
+          if (progress > bestProgress && !blocked(candidateX, candidateY, radius)) {
+            best = { x: candidateX, y: candidateY };
+            bestProgress = progress;
+          }
+        }
+        if (best) { actor.x = best.x; actor.y = best.y; moved = true; }
+      }
+      if (!moved) { hitX = true; hitY = true; }
+      if (!blocked(actor.x, actor.y, radius)) { actor.safeX = actor.x; actor.safeY = actor.y; }
+    }
+
+    if (hitX && actor.vx * dx > 0) actor.vx = 0;
+    if (hitY && actor.vy * dy > 0) actor.vy = 0;
+    if (actor.x === oldX) actor.vx *= 0.15;
+    if (actor.y === oldY) actor.vy *= 0.15;
   }
 
   function hurt() {
