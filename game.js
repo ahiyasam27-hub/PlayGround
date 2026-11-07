@@ -89,6 +89,23 @@ import * as THREE from 'three';
     box: new THREE.BoxGeometry(1, 1, 1),
   };
   const colliders = [];
+  const windClock = { value: 0 };
+  let waterGlints = null;
+  let ambientPointObject = null;
+  const ambientPoints = [];
+  const ambientPositions = new Float32Array(36 * 3);
+  const ambientColors = new Float32Array(36 * 3);
+  function windMaterial(color, amplitude, pivot) {
+    const material = mat(color);
+    material.onBeforeCompile = (shader) => {
+      shader.uniforms.uWindTime = windClock;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform float uWindTime;')
+        .replace('#include <begin_vertex>', `#include <begin_vertex>\nfloat windPhase = uWindTime * 0.62 + instanceMatrix[3].x * 0.17 + instanceMatrix[3].z * 0.19;\nfloat windHeight = max(0.0, position.y + ${pivot.toFixed(3)});\ntransformed.x += sin(windPhase) * windHeight * ${amplitude.toFixed(3)};\ntransformed.z += cos(windPhase * 0.73) * windHeight * ${(amplitude * 0.38).toFixed(3)};`);
+    };
+    material.customProgramCacheKey = () => `wind-${amplitude}-${pivot}`;
+    return material;
+  }
   const worldGroup = new THREE.Group();
   const objectGroup = new THREE.Group();
   const actorGroup = new THREE.Group();
@@ -195,6 +212,7 @@ import * as THREE from 'three';
     buildTreesAndRocks();
     buildGroundCover();
     buildDecorativeLights();
+    buildAmbientEffects();
   }
 
   function createGroundTexture() {
@@ -257,6 +275,21 @@ import * as THREE from 'three';
     for (let y = 0; y <= MAP_H; y += 14) line.push([riverX(y), y]);
     buildRibbon([line], 112, new THREE.MeshStandardMaterial({ color: 0x397d91, roughness: 0.3, metalness: 0.08, transparent: true, opacity: 0.9, side: THREE.DoubleSide }), 14);
     buildRibbon([line], 42, new THREE.MeshStandardMaterial({ color: 0x8bc2c0, roughness: 0.24, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }), 20, 0.035);
+    const glintCount = 36;
+    const glintGeometry = new THREE.BufferGeometry();
+    glintGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(glintCount * 2 * 3), 3));
+    const glintSeeds = Array.from({ length: glintCount }, (_, i) => ({
+      y: random01(i + 5101) * MAP_H,
+      across: (random01(i + 5127) - 0.5) * 78,
+      length: 10 + random01(i + 5153) * 20,
+      speed: 22 + random01(i + 5179) * 28,
+      phase: random01(i + 5201) * Math.PI * 2,
+    }));
+    const glintMaterial = new THREE.LineBasicMaterial({ color: 0xd5f1e8, transparent: true, opacity: 0.34, depthWrite: false });
+    waterGlints = { geometry: glintGeometry, seeds: glintSeeds };
+    const glintLines = new THREE.LineSegments(glintGeometry, glintMaterial);
+    glintLines.frustumCulled = false;
+    worldGroup.add(glintLines);
     const bank = new THREE.MeshStandardMaterial({ color: 0xa59a72, roughness: 1, side: THREE.DoubleSide });
     for (const crossing of BRIDGE_CROSSINGS) {
       const group = new THREE.Group(), p = worldAt(riverX(crossing), crossing, terrainHeight(riverX(crossing), crossing) + 0.16);
@@ -296,8 +329,8 @@ import * as THREE from 'three';
 
   function buildGroundCover() {
     const grassCount = 1800, flowerCount = 300;
-    const grass = new THREE.InstancedMesh(new THREE.ConeGeometry(0.075, 0.42, 4), mat(0xffffff), grassCount);
-    const flowers = new THREE.InstancedMesh(new THREE.SphereGeometry(0.09, 6, 5), mat(0xffffff, 0.72), flowerCount);
+    const grass = new THREE.InstancedMesh(new THREE.ConeGeometry(0.075, 0.42, 4), windMaterial(0xffffff, 0.18, 0.21), grassCount);
+    const flowers = new THREE.InstancedMesh(new THREE.SphereGeometry(0.09, 6, 5), windMaterial(0xffffff, 0.14, 0.09), flowerCount);
     const shrubs = new THREE.InstancedMesh(shared.sphere, mat(0xffffff), 520);
     const placeCover = (mesh, i, seed, scaleRange, palette, yOffset = 0.025) => {
       const region = i % REGIONS.length;
@@ -336,8 +369,8 @@ import * as THREE from 'three';
     for (let regionIndex = 0; regionIndex < REGIONS.length; regionIndex++) {
       const biome = REGIONS[regionIndex];
       const trunks = new THREE.InstancedMesh(shared.trunk, mat(0xffffff), treeCount);
-      const coniferLayers = [0, 1, 2].map(() => new THREE.InstancedMesh(shared.foliage, mat(0xffffff), treeCount));
-      const canopyLayers = [0, 1, 2].map(() => new THREE.InstancedMesh(shared.sphere, mat(0xffffff), treeCount));
+      const coniferLayers = [0, 1, 2].map(() => new THREE.InstancedMesh(shared.foliage, windMaterial(0xffffff, 0.028, 0.63), treeCount));
+      const canopyLayers = [0, 1, 2].map(() => new THREE.InstancedMesh(shared.sphere, windMaterial(0xffffff, 0.022, 0.95), treeCount));
       let conifers = 0, broadleaf = 0;
       for (let i = 0; i < treeCount; i++) {
         const seed = regionIndex * 1009 + i * 37;
@@ -441,6 +474,28 @@ import * as THREE from 'three';
       temp.updateMatrix(); lights.setMatrixAt(i, temp.matrix);
     }
     worldGroup.add(lights);
+  }
+
+  function buildAmbientEffects() {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(ambientPositions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(ambientColors, 3));
+    const material = new THREE.PointsMaterial({ size: 0.13, vertexColors: true, transparent: true, opacity: 0.56, depthWrite: false, sizeAttenuation: true });
+    ambientPointObject = new THREE.Points(geometry, material);
+    ambientPointObject.frustumCulled = false;
+    scene.add(ambientPointObject);
+    for (let i = 0; i < 36; i++) {
+      const firefly = i < 12;
+      const particle = {
+        x: 225 + (random01(i + 5301) - 0.5) * 650,
+        y: 300 + (random01(i + 5327) - 0.5) * 520,
+        phase: random01(i + 5353) * Math.PI * 2,
+        firefly,
+        altitude: firefly ? 0.55 + random01(i + 5379) * 1.25 : 0.25 + random01(i + 5401) * 0.9,
+        color: new THREE.Color(firefly ? 0xe7ee9b : 0xb4bbb5),
+      };
+      ambientPoints.push(particle);
+    }
   }
 
   buildEnvironment();
@@ -735,6 +790,56 @@ import * as THREE from 'three';
   particleSystem.frustumCulled = false;
   scene.add(particleSystem);
 
+  function updateEnvironmentMotion(dt) {
+    windClock.value += dt;
+    hemi.intensity = 2 + Math.sin(windClock.value * 0.12) * 0.025;
+    sun.intensity = 3.2 + Math.sin(windClock.value * 0.12 + 0.8) * 0.035;
+
+    if (waterGlints) {
+      const positions = waterGlints.geometry.attributes.position.array;
+      waterGlints.seeds.forEach((glint, i) => {
+        const y = (glint.y + windClock.value * glint.speed) % MAP_H;
+        const centerX = riverX(y) + glint.across + Math.sin(windClock.value * 0.7 + glint.phase) * 4;
+        const halfLength = glint.length * 0.5;
+        for (let end = 0; end < 2; end++) {
+          const along = end === 0 ? -halfLength : halfLength;
+          const x = centerX + riverX(y + along) - riverX(y);
+          const flowY = (y + along + MAP_H) % MAP_H;
+          const p = worldAt(x, flowY, terrainHeight(x, flowY) + 0.075);
+          const offset = (i * 2 + end) * 3;
+          positions[offset] = p.x; positions[offset + 1] = p.y; positions[offset + 2] = p.z;
+        }
+      });
+      waterGlints.geometry.attributes.position.needsUpdate = true;
+    }
+
+    for (let i = 0; i < ambientPoints.length; i++) {
+      const particle = ambientPoints[i];
+      const spanX = 920, spanY = 720;
+      particle.x += (particle.firefly ? 0.7 : 2.2) * dt;
+      particle.y += Math.sin(windClock.value * 0.34 + particle.phase) * (particle.firefly ? 2.6 : 1.5) * dt;
+      if (particle.x < hero.x - spanX / 2) particle.x += spanX;
+      if (particle.x > hero.x + spanX / 2) particle.x -= spanX;
+      if (particle.y < hero.y - spanY / 2) particle.y += spanY;
+      if (particle.y > hero.y + spanY / 2) particle.y -= spanY;
+      particle.x = THREE.MathUtils.clamp(particle.x, 8, WORLD - 8);
+      particle.y = THREE.MathUtils.clamp(particle.y, 8, MAP_H - 8);
+      const bob = Math.sin(windClock.value * (particle.firefly ? 1.3 : 0.55) + particle.phase);
+      const height = terrainHeight(particle.x, particle.y) + particle.altitude + bob * (particle.firefly ? 0.14 : 0.04);
+      const p = worldAt(particle.x, particle.y, height);
+      const offset = i * 3;
+      ambientPositions[offset] = p.x; ambientPositions[offset + 1] = p.y; ambientPositions[offset + 2] = p.z;
+      const glow = particle.firefly ? 0.32 + (0.5 + 0.5 * Math.sin(windClock.value * 2.1 + particle.phase)) * 0.48 : 0.42;
+      ambientColors[offset] = particle.color.r * glow;
+      ambientColors[offset + 1] = particle.color.g * glow;
+      ambientColors[offset + 2] = particle.color.b * glow;
+    }
+    if (ambientPointObject) {
+      ambientPointObject.geometry.attributes.position.needsUpdate = true;
+      ambientPointObject.geometry.attributes.color.needsUpdate = true;
+    }
+  }
+
   function updateParticles(dt) {
     for (const particle of particles) {
       particle.x += particle.vx * dt;
@@ -1028,6 +1133,7 @@ import * as THREE from 'three';
 
   function update(dt) {
     elapsed += dt;
+    updateEnvironmentMotion(dt);
     if (toastTimer > 0 && (toastTimer -= dt) <= 0) ui.toast.classList.remove('show');
     if (screen !== 'playing') { updateParticles(dt); return; }
     const direction = moveInput();
