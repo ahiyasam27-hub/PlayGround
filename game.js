@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { EnvironmentAssetManager } from './environment-assets.js';
 
 (() => {
   'use strict';
@@ -10,6 +11,7 @@ import * as THREE from 'three';
       .split(' ').map((id) => [id, document.getElementById(id)])
   );
   ui.coins = document.getElementById('coinCount');
+  ui.assetStatus = document.getElementById('assetStatus');
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -606,6 +608,33 @@ import * as THREE from 'three';
   }
 
   buildEnvironment();
+
+  const environmentAssets = new EnvironmentAssetManager(worldGroup, {
+    onStatus: ({ state, loaded = 0, total = 0, error }) => {
+      const status = ui.assetStatus;
+      status.hidden = false;
+      if (state === 'loading') {
+        const progress = total > 0 ? ` · ${Math.round((loaded / total) * 100)}%` : '';
+        status.textContent = `Loading Verdant Reach tree${progress}`;
+      } else if (state === 'loaded') {
+        status.textContent = 'Environment model ready · Verdant Reach';
+        window.setTimeout(() => { status.hidden = true; }, 4000);
+      } else if (state === 'error') {
+        status.textContent = `Environment model failed to load: ${error?.message || 'unknown error'}`;
+      }
+    },
+  });
+  const treePlacements = [
+    { x: 360, y: 190, rotationY: 0.4, scale: 1, region: 'Verdant Reach', biome: 'woodland' },
+    { x: 390, y: 365, rotationY: 2.1, scale: 0.88, region: 'Verdant Reach', biome: 'woodland' },
+  ].map(({ x, y, ...placement }) => ({
+    ...placement,
+    position: worldAt(x, y, terrainAt(x, y, 0.02)),
+  }));
+  environmentAssets.place('./public/assets/environment/stylized-tree.glb', treePlacements, {
+    id: 'lowlypoly-stylized-tree',
+    height: 4.2,
+  }).catch((error) => console.error('Unable to load Verdant Reach environment model:', error));
 
   function createHeroModel() {
     const root = new THREE.Group();
