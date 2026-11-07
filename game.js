@@ -324,7 +324,7 @@ import * as THREE from 'three';
 
   function reset() {
     while (actorGroup.children.length) actorGroup.remove(actorGroup.children[0]);
-    hero = { x: 65, y: 220, vx: 0, vy: 0, faceX: 1, faceY: 0, targetYaw: Math.PI / 4, hp: 5, invuln: 0, attack: 0, attackCd: 0, jumpHeight: 0, jumpVelocity: 0, jumpPhase: 'grounded', jumpTimer: 0, landing: 0, gaitPhase: 0, moveBlend: 0, runBlend: 0, idleTime: 0, checkpoint: { x: 65, y: 220 }, model: createHeroModel() };
+    hero = { x: 65, y: 220, vx: 0, vy: 0, faceX: 1, faceY: 0, targetYaw: Math.PI / 4, hp: 5, invuln: 0, attack: 0, attackCd: 0, attackHit: false, jumpHeight: 0, jumpVelocity: 0, jumpPhase: 'grounded', jumpTimer: 0, landing: 0, gaitPhase: 0, moveBlend: 0, runBlend: 0, idleTime: 0, checkpoint: { x: 65, y: 220 }, model: createHeroModel() };
     actorGroup.add(hero.model.root);
     enemies = []; coins = []; checkpoints = []; gates = []; bosses = []; particles = []; keysFound = 0;
     for (let r = 0; r < REGIONS.length; r++) {
@@ -574,12 +574,12 @@ import * as THREE from 'three';
     const speed01 = THREE.MathUtils.clamp(movementSpeed / 190, 0, 1);
     const moveTarget = speed01 * speed01 * (3 - 2 * speed01);
     const runTarget = THREE.MathUtils.clamp((speed01 - 0.48) / 0.28, 0, 1);
-    const blend = 1 - Math.exp(-dt * 9);
-    hero.moveBlend += (moveTarget - hero.moveBlend) * blend;
+    hero.moveBlend += (moveTarget - hero.moveBlend) * (1 - Math.exp(-dt * 9));
     hero.runBlend += (runTarget - hero.runBlend) * (1 - Math.exp(-dt * 6));
 
     if (movementSpeed > 0.5) {
-      const strideLength = 1.65 + hero.runBlend * 0.65;
+      // Advance the feet with real travel distance so cadence stays believable as speed changes.
+      const strideLength = 2.45 + hero.runBlend * 0.5;
       hero.gaitPhase += (movementSpeed / SCALE) * (Math.PI * 2 / strideLength) * dt;
     } else hero.idleTime += dt;
 
@@ -593,52 +593,71 @@ import * as THREE from 'three';
     const locomotion = hero.moveBlend;
     const run = hero.runBlend;
     const phase = hero.gaitPhase;
-    const step = Math.sin(phase);
     const stride = 0.42 + run * 0.24;
+    const jumpActive = hero.jumpHeight > 0 || hero.jumpPhase === 'takeoff';
+    const idleBreath = Math.sin(elapsed * 2.1);
 
-    model.torso.scale.y = 1 + Math.sin(elapsed * 2.1) * 0.012 * (1 - locomotion);
+    model.torso.scale.y = 1 + idleBreath * 0.012 * (1 - locomotion);
     model.torsoPivot.position.y = 0.78 + Math.abs(Math.sin(phase * 2)) * (0.012 + run * 0.018) * locomotion;
-    model.torsoPivot.rotation.x = 0.025 + locomotion * (0.035 + run * 0.055) + (hero.jumpHeight > 0 ? -0.08 : 0);
-    model.torsoPivot.rotation.z = -sideSpeed / 190 * 0.055 * locomotion + Math.sin(elapsed * 1.35) * 0.012 * (1 - locomotion);
+    model.torsoPivot.rotation.x = 0.025 + locomotion * (0.035 + run * 0.075) - THREE.MathUtils.clamp(forwardSpeed / 190, -1, 1) * 0.055;
+    model.torsoPivot.rotation.y = -yawDelta * 0.16 * (0.3 + locomotion * 0.7);
+    model.torsoPivot.rotation.z = -sideSpeed / 190 * 0.07 * locomotion + Math.sin(elapsed * 1.35) * 0.012 * (1 - locomotion);
     model.headPivot.rotation.x = -model.torsoPivot.rotation.x * 0.35;
-    model.headPivot.rotation.y = Math.sin(elapsed * 0.8) * 0.025 * (1 - locomotion);
+    model.headPivot.rotation.y = Math.sin(elapsed * 0.8) * 0.025 * (1 - locomotion) + yawDelta * 0.08;
 
     for (let i = 0; i < 2; i++) {
       const legPhase = phase + i * Math.PI;
       const swing = Math.sin(legPhase);
+      const lift = Math.max(0, Math.cos(legPhase));
       model.legs[i].rotation.x = swing * stride * locomotion;
-      model.feet[i].position.y = -0.49 + Math.max(0, Math.cos(legPhase)) * (0.075 + run * 0.065) * locomotion;
-      model.feet[i].rotation.x = -swing * stride * 0.42 * locomotion;
+      model.feet[i].position.y = -0.49 + lift * (0.075 + run * 0.065) * locomotion;
+      model.feet[i].rotation.x = -swing * stride * 0.42 * locomotion + lift * 0.08 * locomotion;
       const armSwing = Math.sin(phase + (1 - i) * Math.PI) * (0.28 + run * 0.24) * locomotion;
       model.arms[i].rotation.x = armSwing;
-      model.arms[i].rotation.z = (i === 0 ? -0.08 : 0.12) * (1 - locomotion);
+      model.arms[i].rotation.z = (i === 0 ? -0.08 : 0.12) * (1 - locomotion) - sideSpeed / 190 * 0.08;
     }
 
-    let attackCurve = 0;
     if (hero.attack > 0) {
-      const progress = 1 - hero.attack / 0.34;
-      attackCurve = Math.sin(Math.max(0, Math.min(1, progress)) * Math.PI);
-      model.arms[1].rotation.x = -0.35 - attackCurve * 0.7;
-      model.arms[1].rotation.z = 0.2 + attackCurve * 0.32;
-      model.swordPivot.rotation.x = -0.45 - attackCurve * 1.6;
+      const progress = THREE.MathUtils.clamp(1 - hero.attack / 0.34, 0, 1);
+      // Wind-up, crisp slash, then a short follow-through instead of a single soft sine pose.
+      const windup = 1 - THREE.MathUtils.smoothstep(progress, 0.08, 0.32);
+      const slash = Math.sin(THREE.MathUtils.smoothstep(progress, 0.22, 0.76) * Math.PI);
+      const followThrough = THREE.MathUtils.smoothstep(progress, 0.58, 0.9) * (1 - THREE.MathUtils.smoothstep(progress, 0.88, 1));
+      model.torsoPivot.rotation.y += -0.12 * windup + 0.2 * slash;
+      model.torsoPivot.rotation.x -= 0.08 * slash;
+      model.arms[1].rotation.x = 0.72 * windup - 1.12 * slash - 0.28 * followThrough;
+      model.arms[1].rotation.z = 0.28 + 0.3 * slash;
+      model.swordPivot.rotation.x = -0.15 - 1.9 * slash - 0.35 * followThrough;
     } else {
       model.swordPivot.rotation.x = 0;
     }
 
-    if (hero.jumpHeight > 0 || hero.jumpPhase === 'takeoff') {
-      const tuck = hero.jumpPhase === 'takeoff' ? 0.35 : 1;
+    if (jumpActive) {
+      const takeoff = hero.jumpPhase === 'takeoff' ? THREE.MathUtils.smoothstep(hero.jumpTimer, 0, 0.11) : 1;
+      const descent = hero.jumpVelocity < 0 ? THREE.MathUtils.clamp(-hero.jumpVelocity / 5.2, 0, 1) : 0;
+      const tuck = hero.jumpPhase === 'takeoff' ? 0.25 + takeoff * 0.2 : 0.9 - descent * 0.35;
+      model.torsoPivot.position.y -= (1 - takeoff) * 0.11;
+      model.torsoPivot.rotation.x -= 0.12 + (1 - takeoff) * 0.16;
+      model.torso.scale.y = 1 + (1 - takeoff) * 0.06;
+      model.root.scale.y = 1;
       for (let i = 0; i < 2; i++) {
-        model.legs[i].rotation.x = -0.45 * tuck;
+        model.legs[i].rotation.x = -0.42 * tuck + (i === 0 ? 0.08 : -0.08);
         model.feet[i].position.y = -0.43;
-        model.arms[i].rotation.x = -0.45 - (i === 0 ? 0.2 : 0);
+        model.feet[i].rotation.x = 0.16 + descent * 0.25;
+        model.arms[i].rotation.x = -0.45 - (i === 0 ? 0.22 : 0) - descent * 0.12;
       }
       if (hero.attack <= 0) model.swordPivot.rotation.x = 0.12;
     } else if (hero.jumpPhase === 'landing') {
-      const compression = Math.sin((hero.landing / 0.24) * Math.PI);
-      model.torsoPivot.position.y -= compression * 0.1;
-      model.torsoPivot.rotation.x += compression * 0.1;
-      model.legs[0].rotation.x = model.legs[1].rotation.x = -compression * 0.18;
-      model.arms[0].rotation.x = -compression * 0.35;
+      const impact = THREE.MathUtils.clamp(1 - (0.24 - hero.landing) / 0.24, 0, 1);
+      const compression = Math.exp(-impact * 9);
+      model.root.scale.y = 1 - compression * 0.075;
+      model.torsoPivot.position.y -= compression * 0.13;
+      model.torsoPivot.rotation.x += compression * 0.16;
+      model.legs[0].rotation.x = model.legs[1].rotation.x = -compression * 0.24;
+      model.arms[0].rotation.x = -compression * 0.4;
+      model.arms[1].rotation.x = -compression * 0.22;
+    } else {
+      model.root.scale.y = 1;
     }
   }
 
@@ -646,11 +665,12 @@ import * as THREE from 'three';
     if (hero.attackCd > 0) return;
     hero.attack = 0.34;
     hero.attackCd = 0.4;
+    hero.attackHit = false;
     hero.model.swordPivot.rotation.x = -0.5;
   }
 
   function attackTargets() {
-    if (hero.attack <= 0) return;
+    if (hero.attack <= 0 || hero.attackHit) return;
     const strike = (target, range) => {
       const dx = target.x - hero.x, dy = target.y - hero.y;
       const distance = Math.hypot(dx, dy) || 1;
@@ -659,9 +679,9 @@ import * as THREE from 'three';
     for (const enemy of enemies) {
       if (!enemy.alive || !strike(enemy, 65)) continue;
       enemy.hp--;
+      hero.attackHit = true;
       enemy.x += hero.faceX * 17; enemy.y += hero.faceY * 17;
       burst(enemy.x, enemy.y, 0xa8da8e, 9);
-      hero.attack = 0.06;
       if (enemy.hp <= 0) {
         enemy.alive = false; enemy.model.root.visible = false;
         burst(enemy.x, enemy.y, 0x8bd17d, 15); showToast('Forest slime defeated');
@@ -670,7 +690,7 @@ import * as THREE from 'three';
     }
     const region = regionAt(hero.x), boss = bosses[region];
     if (boss?.alive && strike(boss, 82) && boss.hitCd <= 0) {
-      boss.hp--; boss.hitCd = 0.42; hero.attack = 0.06;
+      boss.hp--; boss.hitCd = 0.42; hero.attackHit = true;
       boss.healthMesh.scale.x = 1.29 * (boss.hp / boss.maxHp);
       boss.healthMesh.position.x = -0.66 + (boss.healthMesh.scale.x / 2);
       burst(boss.x, boss.y, 0xffd57a, 14);
