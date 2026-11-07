@@ -1384,6 +1384,12 @@ import { EnvironmentAssetManager } from './environment-assets.js';
   if (new URLSearchParams(location.search).has('perf')) {
     window.__gamePerf = {
       samples: perfSamples,
+      state: () => ({ screen, hp: hero.hp, checkpoint: { ...hero.checkpoint }, bosses: bosses.map((boss) => ({ hp: boss.hp, alive: boss.alive })), gates: gates.map((gate) => gate.open), keysFound }),
+      setQuality: ({ shadows = renderer.shadowMap.enabled, pixelRatio = renderer.getPixelRatio() } = {}) => {
+        renderer.shadowMap.enabled = shadows;
+        renderer.setPixelRatio(pixelRatio);
+        renderer.setSize(width, height, false);
+      },
       treeInstances: () => environmentAssets.instances.size,
       treeMeshes: () => {
         let count = 0;
