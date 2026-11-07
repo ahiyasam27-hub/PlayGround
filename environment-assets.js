@@ -29,8 +29,8 @@ export class EnvironmentAssetManager {
       source.position.set(-center.x * height / size.y, -bounds.min.y * height / size.y, -center.z * height / size.y);
       source.traverse((object) => {
         if (!object.isMesh) return;
-        object.castShadow = false;
-        object.receiveShadow = false;
+        object.castShadow = true;
+        object.receiveShadow = true;
         object.frustumCulled = true;
         object.userData.assetId = id;
       });
