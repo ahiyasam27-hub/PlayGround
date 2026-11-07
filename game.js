@@ -1379,11 +1379,60 @@ import { EnvironmentAssetManager } from './environment-assets.js';
     }
   }
 
+  const perfSamples = [];
+  let previousFrameTime = null;
+  if (new URLSearchParams(location.search).has('perf')) {
+    window.__gamePerf = {
+      samples: perfSamples,
+      treeInstances: () => environmentAssets.instances.size,
+      treeMeshes: () => {
+        let count = 0;
+        for (const root of environmentAssets.instances) root.traverse((object) => { if (object.isMesh) count++; });
+        return count;
+      },
+      clearSamples: () => { perfSamples.length = 0; previousFrameTime = null; },
+      snapshot: () => {
+        const frames = perfSamples.map((sample) => sample.frameMs).filter(Number.isFinite).sort((a, b) => a - b);
+        const percentile = (fraction) => frames.length ? frames[Math.min(frames.length - 1, Math.floor((frames.length - 1) * fraction))] : null;
+        const elapsed = perfSamples.length > 1 ? perfSamples.at(-1).time - perfSamples[0].time : 0;
+        return {
+          fps: elapsed > 0 ? (perfSamples.length - 1) * 1000 / elapsed : null,
+          frameMsP50: percentile(0.5),
+          frameMsP95: percentile(0.95),
+          sampleCount: frames.length,
+          calls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
+          geometries: renderer.info.memory.geometries,
+          textures: renderer.info.memory.textures,
+          treeInstances: environmentAssets.instances.size,
+          treeMeshes: window.__gamePerf.treeMeshes(),
+          position: hero ? [Math.round(hero.x), Math.round(hero.y)] : null,
+        };
+      },
+      moveTo: (x, y) => {
+        hero.x = x; hero.y = y; hero.vx = hero.vy = 0;
+        const target = worldAt(x, y, terrainAt(x, y, 0.25));
+        const lookTarget = target.clone().add(v3(0, 0.45, 0));
+        camera.position.copy(lookTarget).add(depthAxis.clone().multiplyScalar(23.5 * Math.cos(35 * Math.PI / 180))).add(v3(0, 23.5 * Math.sin(35 * Math.PI / 180), 0));
+        camera.lookAt(lookTarget);
+      },
+    };
+  }
   function render(now) {
+    const frameMs = previousFrameTime === null ? null : Math.max(0, now - previousFrameTime);
+    previousFrameTime = now;
     const dt = Math.min(0.033, Math.max(0, (now - last) / 1000));
     last = now;
+    const updateStart = performance.now();
     update(dt);
+    const updateMs = performance.now() - updateStart;
+    const renderStart = performance.now();
     renderer.render(scene, camera);
+    const renderMs = performance.now() - renderStart;
+    if (window.__gamePerf) {
+      perfSamples.push({ time: now, frameMs, updateMs, renderMs, dt, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles });
+      if (perfSamples.length > 120) perfSamples.shift();
+    }
     requestAnimationFrame(render);
   }
   reset();
