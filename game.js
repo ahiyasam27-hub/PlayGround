@@ -53,13 +53,17 @@ import * as THREE from 'three';
   const depthAxis = new THREE.Vector3(Math.SQRT1_2, 0, Math.SQRT1_2);
   const temp = new THREE.Object3D();
   const v3 = (x, y, z) => new THREE.Vector3(x, y, z);
+  const terrainHills = [
+    [210, 470, 2.1, 260], [510, 1010, 4.6, 285], [790, 240, 2.4, 250],
+    [1060, 680, 2.7, 310], [1370, 1000, 4.1, 290], [1450, 210, 1.7, 245],
+    [85, 875, 3.2, 235], [685, 470, 1.8, 205], [1130, 1080, 2.8, 240],
+    [1510, 690, 2.2, 250], [350, 155, 1.5, 215], [960, 1030, 1.7, 220],
+  ];
   const terrainHeight = (x, y) => {
-    const hills = [
-      [210, 470, 1.15, 235], [510, 1010, 2.6, 250], [790, 240, 1.5, 230],
-      [1060, 680, 1.35, 285], [1370, 1000, 2.25, 255], [1450, 210, 0.9, 210],
-    ];
-    let h = 0.12 * Math.sin(x / 92) * Math.cos(y / 107) + 0.08 * Math.sin((x + y) / 58);
-    for (const [cx, cy, amount, radius] of hills) {
+    let h = 0.18 * Math.sin(x / 92) * Math.cos(y / 107)
+      + 0.12 * Math.sin((x + y) / 58)
+      + 0.1 * Math.sin(x / 31 + Math.sin(y / 73)) * Math.cos(y / 39);
+    for (const [cx, cy, amount, radius] of terrainHills) {
       const d = Math.hypot((x - cx) * 0.88, y - cy);
       h += amount * Math.exp(-(d * d) / (radius * radius));
     }
@@ -170,7 +174,10 @@ import * as THREE from 'three';
       const x = -margin + terrainWidth * col / cols, y = -margin + terrainDepth * row / rows;
       const p = worldAt(x, y, terrainHeight(x, y) - 0.12);
       positions.push(p.x, p.y, p.z);
-      const color = regionColorAt(x, y).multiplyScalar(0.94 + random01(row * 131 + col * 17) * 0.12);
+      const height = terrainHeight(x, y);
+      const color = regionColorAt(x, y).multiplyScalar(0.9 + random01(row * 131 + col * 17) * 0.16);
+      const exposedStone = THREE.MathUtils.smoothstep(height, 2.8, 5.2) * (regionAt(x, y) === 1 ? 0.18 : 0.34);
+      color.lerp(new THREE.Color(regionAt(x, y) === 1 ? 0xc3d0c9 : 0x857e72), exposedStone);
       colors.push(color.r, color.g, color.b);
       if (row < rows && col < cols) {
         const a = row * (cols + 1) + col, b = a + cols + 1;
@@ -218,7 +225,7 @@ import * as THREE from 'three';
     return texture;
   }
 
-  function buildRibbon(lines, width, material, segments = 28) {
+  function buildRibbon(lines, width, material, segments = 28, heightOffset = 0) {
     for (const line of lines) {
       const points = [];
       for (let i = 0; i < line.length - 1; i++) {
@@ -231,7 +238,7 @@ import * as THREE from 'three';
         const [x, y] = points[i], before = points[Math.max(0, i - 1)], after = points[Math.min(points.length - 1, i + 1)];
         const length = Math.hypot(after[0] - before[0], after[1] - before[1]) || 1;
         const nx = -(after[1] - before[1]) / length, ny = (after[0] - before[0]) / length;
-        for (const side of [-1, 1]) { const p = worldAt(x + nx * width * side / 2, y + ny * width * side / 2, terrainHeight(x, y) + 0.025); vertices.push(p.x, p.y, p.z); }
+        for (const side of [-1, 1]) { const p = worldAt(x + nx * width * side / 2, y + ny * width * side / 2, terrainHeight(x, y) + 0.025 + heightOffset); vertices.push(p.x, p.y, p.z); }
         if (i < points.length - 1) { const a = i * 2; indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
       }
       const geometry = new THREE.BufferGeometry();
@@ -249,6 +256,7 @@ import * as THREE from 'three';
     const line = [];
     for (let y = 0; y <= MAP_H; y += 14) line.push([riverX(y), y]);
     buildRibbon([line], 112, new THREE.MeshStandardMaterial({ color: 0x397d91, roughness: 0.3, metalness: 0.08, transparent: true, opacity: 0.9, side: THREE.DoubleSide }), 14);
+    buildRibbon([line], 42, new THREE.MeshStandardMaterial({ color: 0x8bc2c0, roughness: 0.24, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }), 20, 0.035);
     const bank = new THREE.MeshStandardMaterial({ color: 0xa59a72, roughness: 1, side: THREE.DoubleSide });
     for (const crossing of BRIDGE_CROSSINGS) {
       const group = new THREE.Group(), p = worldAt(riverX(crossing), crossing, terrainHeight(riverX(crossing), crossing) + 0.16);
@@ -286,69 +294,133 @@ import * as THREE from 'three';
   }
 
   function buildGroundCover() {
-    const grassGeo = new THREE.ConeGeometry(0.085, 0.38, 4);
-    const grass = new THREE.InstancedMesh(grassGeo, mat(0x72804b), 1100);
-    for (let i = 0; i < 1100; i++) {
-      let x = 0, y = 0;
-      for (let attempt = 0; attempt < 8; attempt++) {
-        x = 18 + random01(i * 11 + attempt + 2031) * (WORLD - 36);
-        y = 18 + random01(i * 11 + attempt + 2131) * (MAP_H - 36);
-        if (distanceToPath(x, y) > 30 && distanceToRiver(x, y) > 178) break;
+    const grassCount = 1800, flowerCount = 300;
+    const grass = new THREE.InstancedMesh(new THREE.ConeGeometry(0.075, 0.42, 4), mat(0xffffff), grassCount);
+    const flowers = new THREE.InstancedMesh(new THREE.SphereGeometry(0.09, 6, 5), mat(0xffffff, 0.72), flowerCount);
+    const shrubs = new THREE.InstancedMesh(shared.sphere, mat(0xffffff), 520);
+    const placeCover = (mesh, i, seed, scaleRange, palette, yOffset = 0.025) => {
+      const region = i % REGIONS.length;
+      const biome = REGIONS[region];
+      let x = biome.x, y = biome.y;
+      for (let attempt = 0; attempt < 18; attempt++) {
+        x = biome.x + (random01(seed + attempt * 7 + 2031) - 0.5) * 600;
+        y = biome.y + (random01(seed + attempt * 7 + 2131) - 0.5) * 500;
+        if (x > 16 && x < WORLD - 16 && y > 16 && y < MAP_H - 16
+          && regionAt(x, y) === region && distanceToPath(x, y) > 25
+          && distanceToRiver(x, y) > 72 && Math.hypot(x - 800, y - 600) > 118) break;
       }
-      temp.position.copy(worldAt(x, y, terrainAt(x, y, 0.025)));
-      temp.rotation.set(0, random01(i + 2231) * Math.PI, (random01(i + 2331) - 0.5) * 0.28);
-      const scale = 0.35 + random01(i + 2431) * 0.9;
+      const scale = scaleRange[0] + random01(seed + 2431) * (scaleRange[1] - scaleRange[0]);
+      temp.position.copy(worldAt(x, y, terrainAt(x, y, yOffset)));
+      temp.rotation.set(0, random01(seed + 2231) * Math.PI, (random01(seed + 2331) - 0.5) * 0.2);
       temp.scale.set(scale, scale, scale);
       temp.updateMatrix();
-      grass.setMatrixAt(i, temp.matrix);
-      grass.setColorAt(i, new THREE.Color([0x647849, 0x899052, 0x9a965b, 0x536d43][i % 4]).multiplyScalar(0.8 + random01(i + 2531) * 0.35));
+      mesh.setMatrixAt(i, temp.matrix);
+      const color = palette[i % palette.length];
+      mesh.setColorAt(i, new THREE.Color(color).multiplyScalar(0.82 + random01(seed + 2531) * 0.36));
+    };
+    for (let i = 0; i < grassCount; i++) placeCover(grass, i, i * 11, [0.45, 1.65], [0x647849, 0x899052, 0x9a965b, 0x536d43]);
+    for (let i = 0; i < flowerCount; i++) placeCover(flowers, i, i * 17 + 401, [0.55, 1.5], [0xe8c86b, 0xe9e3cb, 0xd88772, 0xc3b4df, 0xd2a85d], 0.16);
+    for (let i = 0; i < shrubs.count; i++) placeCover(shrubs, i, i * 19 + 1103, [0.18, 0.38], [0x496b43, 0x557747, 0x6d7647], 0.16);
+    for (const mesh of [grass, flowers, shrubs]) {
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      worldGroup.add(mesh);
     }
-    grass.instanceMatrix.needsUpdate = true;
-    if (grass.instanceColor) grass.instanceColor.needsUpdate = true;
-    grass.castShadow = false;
-    grass.receiveShadow = true;
-    worldGroup.add(grass);
   }
 
   function buildTreesAndRocks() {
+    const treeCount = 28;
     for (let regionIndex = 0; regionIndex < REGIONS.length; regionIndex++) {
       const biome = REGIONS[regionIndex];
-      for (let i = 0; i < 22; i++) {
-        const seed = regionIndex * 101 + i;
-        let x = biome.x, y = biome.y;
-        for (let attempt = 0; attempt < 20; attempt++) {
-          x = biome.x + (random01(seed * 23 + attempt + 20) - 0.5) * 560;
-          y = biome.y + (random01(seed * 23 + attempt + 21) - 0.5) * 440;
-          if (x > 24 && x < WORLD - 24 && y > 24 && y < MAP_H - 24 && regionAt(x, y) === regionIndex && distanceToPath(x, y) > 68 && distanceToRiver(x, y) > 182 && Math.hypot(x - 800, y - 600) > 145) break;
+      const trunks = new THREE.InstancedMesh(shared.trunk, mat(0xffffff), treeCount);
+      const coniferLayers = [0, 1, 2].map(() => new THREE.InstancedMesh(shared.foliage, mat(0xffffff), treeCount));
+      const canopyLayers = [0, 1, 2].map(() => new THREE.InstancedMesh(shared.sphere, mat(0xffffff), treeCount));
+      let conifers = 0, broadleaf = 0;
+      for (let i = 0; i < treeCount; i++) {
+        const seed = regionIndex * 1009 + i * 37;
+        let x = biome.x, y = biome.y, valid = false;
+        for (let attempt = 0; attempt < 32; attempt++) {
+          x = biome.x + (random01(seed + attempt * 13 + 20) - 0.5) * 620;
+          y = biome.y + (random01(seed + attempt * 13 + 21) - 0.5) * 500;
+          valid = x > 28 && x < WORLD - 28 && y > 28 && y < MAP_H - 28
+            && regionAt(x, y) === regionIndex && distanceToPath(x, y) > 44
+            && distanceToRiver(x, y) > 96 && Math.hypot(x - 800, y - 600) > 132;
+          if (valid) break;
         }
-        if (x < 24 || x > WORLD - 24 || y < 24 || y > MAP_H - 24 || distanceToPath(x, y) < 48 || distanceToRiver(x, y) < 175) continue;
-        const g = new THREE.Group(), p = worldAt(x, y);
-        g.position.set(p.x, p.y, p.z);
-        g.rotation.y = Math.PI / 4;
-        const s = 0.82 + random01(seed + 23) * 0.48;
-        addMesh(g, shared.trunk, mats.bark, v3(0, 0.66 * s, 0), { scale: [s, s, s] });
-        const leafMat = regionIndex === 1 ? mats.snow : mat(biome.leaf);
-        for (let layer = 0; layer < 3; layer++) {
-          addMesh(g, shared.foliage, leafMat, v3(0, (1.25 + layer * 0.5) * s, 0), { scale: [s * (1.15 - layer * 0.12), s, s * (1.15 - layer * 0.12)] });
+        if (!valid) continue;
+        const p = worldAt(x, y), scale = 0.78 + random01(seed + 23) * 0.62;
+        const isBroadleaf = random01(seed + 67) < (regionIndex === 2 ? 0.72 : regionIndex === 1 ? 0.08 : 0.42);
+        temp.position.set(p.x, p.y + 0.66 * scale, p.z);
+        temp.rotation.set(0, random01(seed + 31) * Math.PI * 2, (random01(seed + 32) - 0.5) * 0.05);
+        temp.scale.set(scale, scale, scale); temp.updateMatrix();
+        trunks.setMatrixAt(i, temp.matrix);
+        trunks.setColorAt(i, new THREE.Color(regionIndex === 2 ? 0x76583a : regionIndex === 1 ? 0x68594d : 0x584332).multiplyScalar(0.82 + random01(seed + 82) * 0.35));
+        if (isBroadleaf) {
+          for (let layer = 0; layer < 3; layer++) {
+            temp.position.set(p.x + (layer - 1) * 0.14 * scale, p.y + (1.72 + (layer === 1 ? 0.15 : 0)) * scale, p.z + (layer % 2 ? 0.12 : -0.12) * scale);
+            temp.rotation.set(0, random01(seed + layer + 41) * Math.PI * 2, 0);
+            const crown = scale * (layer === 1 ? 0.78 : 0.68);
+            temp.scale.set(crown, crown * 0.76, crown); temp.updateMatrix();
+            canopyLayers[layer].setMatrixAt(broadleaf, temp.matrix);
+            canopyLayers[layer].setColorAt(broadleaf, new THREE.Color(biome.leaf).offsetHSL((random01(seed + layer + 52) - 0.5) * 0.06, 0, 0.07 + (random01(seed + layer + 56) - 0.5) * 0.12));
+          }
+          broadleaf++;
+        } else {
+          for (let layer = 0; layer < 3; layer++) {
+            temp.position.set(p.x, p.y + (1.2 + layer * 0.52) * scale, p.z);
+            temp.rotation.set(0, random01(seed + 45) * Math.PI * 2, 0);
+            const crown = scale * (1.12 - layer * 0.13);
+            temp.scale.set(crown, scale, crown); temp.updateMatrix();
+            coniferLayers[layer].setMatrixAt(conifers, temp.matrix);
+            coniferLayers[layer].setColorAt(conifers, new THREE.Color(biome.leaf).offsetHSL((random01(seed + layer + 63) - 0.5) * 0.06, 0, 0.07 + (random01(seed + layer + 68) - 0.5) * 0.1));
+          }
+          conifers++;
         }
-        worldGroup.add(g);
-        colliders.push({ x, y, r: 22 * s });
+        colliders.push({ x, y, r: 20 * scale });
+      }
+      trunks.instanceMatrix.needsUpdate = true;
+      if (trunks.instanceColor) trunks.instanceColor.needsUpdate = true;
+      trunks.castShadow = true; trunks.receiveShadow = true; worldGroup.add(trunks);
+      for (const [layers, count] of [[coniferLayers, conifers], [canopyLayers, broadleaf]]) {
+        for (const mesh of layers) {
+          mesh.count = count;
+          mesh.instanceMatrix.needsUpdate = true;
+          if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+          mesh.castShadow = false; mesh.receiveShadow = true; worldGroup.add(mesh);
+        }
       }
     }
-    for (let i = 0; i < 42; i++) {
-      const biome = REGIONS[i % REGIONS.length];
-      let x = biome.x, y = biome.y;
-      for (let attempt = 0; attempt < 12; attempt++) {
-        x = biome.x + (random01(i * 19 + attempt + 100) - 0.5) * 460;
-        y = biome.y + (random01(i * 19 + attempt + 700) - 0.5) * 380;
-        if (x > 22 && x < WORLD - 22 && y > 22 && y < MAP_H - 22 && distanceToPath(x, y) > 54 && distanceToRiver(x, y) > 178) break;
+
+    const rockCount = 145;
+    const rocks = new THREE.InstancedMesh(shared.rock, mat(0xffffff), rockCount);
+    let placed = 0;
+    for (let i = 0; i < rockCount; i++) {
+      const region = i % REGIONS.length, biome = REGIONS[region], seed = i * 29 + 509;
+      let x = biome.x, y = biome.y, valid = false;
+      for (let attempt = 0; attempt < 24; attempt++) {
+        x = biome.x + (random01(seed + attempt * 5 + 91) - 0.5) * 600;
+        y = biome.y + (random01(seed + attempt * 5 + 92) - 0.5) * 480;
+        valid = x > 18 && x < WORLD - 18 && y > 18 && y < MAP_H - 18
+          && distanceToPath(x, y) > 36 && distanceToRiver(x, y) > 76
+          && Math.hypot(x - 800, y - 600) > 118
+          && colliders.every((obstacle) => Math.hypot(x - obstacle.x, y - obstacle.y) > obstacle.r + 18);
+        if (valid) break;
       }
-      if (distanceToPath(x, y) < 40 || distanceToRiver(x, y) < 170) continue;
-      const p = worldAt(x, y, terrainAt(x, y, 0.18));
-      const rock = addMesh(worldGroup, shared.rock, mat(i % 3 ? 0x68706a : 0x817c70), p, { scale: [0.55 + random01(i) * 0.6, 0.35 + random01(i + 2) * 0.35, 0.48 + random01(i + 3) * 0.5], rotation: [random01(i + 4), random01(i + 5), random01(i + 6)] });
-      rock.castShadow = true;
-      colliders.push({ x, y, r: 17 });
+      if (!valid) continue;
+      const sx = 0.52 + random01(seed + 3) * 0.9, sy = 0.34 + random01(seed + 4) * 0.55, sz = 0.5 + random01(seed + 5) * 0.78;
+      const p = worldAt(x, y, terrainAt(x, y, sy * 0.28));
+      temp.position.copy(p); temp.rotation.set(random01(seed + 6) * 0.6, random01(seed + 7) * Math.PI, random01(seed + 8) * 0.6);
+      temp.scale.set(sx, sy, sz); temp.updateMatrix();
+      rocks.setMatrixAt(placed, temp.matrix);
+      rocks.setColorAt(placed, new THREE.Color([0x68706a, 0x817c70, 0x777e78, 0x625e60][i % 4]).multiplyScalar(0.82 + random01(seed + 9) * 0.32));
+      colliders.push({ x, y, r: 16 + Math.max(sx, sz) * 4 });
+      placed++;
     }
+    rocks.count = placed; rocks.instanceMatrix.needsUpdate = true;
+    if (rocks.instanceColor) rocks.instanceColor.needsUpdate = true;
+    rocks.castShadow = true; rocks.receiveShadow = true; worldGroup.add(rocks);
   }
 
   function buildDecorativeLights() {
